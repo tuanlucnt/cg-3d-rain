@@ -18,6 +18,9 @@ struct RunOptions {
     float fogDensity = 0.018f;
     std::string viewCaptureDirectory;
     bool unlocked = false;
+    double hour = TimeOfDaySystem::DEFAULT_HOUR;
+    double dayDuration = TimeOfDaySystem::DEFAULT_DAY_SECONDS;
+    bool autoTime = false;
 };
 
 class Application {
@@ -45,6 +48,7 @@ private:
     void fail(const char* message);
     void smokeStep();
     void inspectFramebuffer(const std::string& capturePath = {}) const;
+    void printTimeHelp() const;
 
     // FreeGLUT's C callbacks route to the single application instance.
     static Application* active_;

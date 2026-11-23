@@ -1,6 +1,7 @@
 #include "Renderer.hpp"
 #include "Surface.hpp"
 #include "EnvironmentGeometry.hpp"
+#include "ModelGeometry.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -38,7 +39,11 @@ Renderer::Renderer()
       materialKind_(shader_.uniform("uMaterialKind")), materialResponse_(shader_.uniform("uMaterialResponse")),
       materialWetGloss_(shader_.uniform("uMaterialWetGloss")),
       treeHeight_(shader_.uniform("uTreeHeight")), modelTime_(shader_.uniform("uModelTime")),
-      treeWind_(shader_.uniform("uTreeWind")) {
+      treeWind_(shader_.uniform("uTreeWind")),
+      lightDirection_(shader_.uniform("uLightDirection")), ambientColor_(shader_.uniform("uAmbientColor")),
+      directionalColor_(shader_.uniform("uDirectionalColor")), windowStrength_(shader_.uniform("uWindowStrength")),
+      weatherLight_(effectsShader_.uniform("uWeatherLight")),skyReflection_(shader_.uniform("uSkyReflection")),
+      rainPass_(effectsShader_.uniform("uRainPass")) {
     const CloudSystem layout;
     for (std::size_t i=0;i<CloudSystem::COUNT;++i) {
         const auto mesh=environment::cloud(layout.clusters()[i]);
@@ -58,9 +63,6 @@ Renderer::Renderer()
     glFrontFace(GL_CCW);
     glClearColor(0.08f, 0.11f, 0.16f, 1.0f);
     shader_.use();
-    glUniform3f(shader_.uniform("uLightDirection"), -0.5f, -1.0f, -0.35f);
-    glUniform1f(shader_.uniform("uAmbient"), LightingSystem::AMBIENT);
-    glUniform1f(shader_.uniform("uDiffuse"), LightingSystem::DIFFUSE);
     glUniform2f(shader_.uniform("uFlashAttenuation"), LightingSystem::LINEAR_ATTENUATION,
                 LightingSystem::QUADRATIC_ATTENUATION);
     glUniform3fv(shader_.uniform("uGroundColor"), 1, glm::value_ptr(surface::GROUND_COLOR));
@@ -70,6 +72,12 @@ Renderer::Renderer()
         glUniform4f(shader_.uniform(("uPuddles["+std::to_string(i)+"]").c_str()),p.center.x,p.center.z,p.scale.x,p.scale.y);
         glUniform2f(shader_.uniform(("uPuddleRotation["+std::to_string(i)+"]").c_str()),std::cos(a),std::sin(a));
     }
+    std::size_t contact=0;
+    const auto contactPoint=[&](glm::vec3 p,float radius) {
+        glUniform3f(shader_.uniform(("uContacts["+std::to_string(contact++)+"]").c_str()),p.x,p.z,radius);
+    };
+    for (const auto& tree:models::treeLayout()) contactPoint(tree.position,0.48f);
+    for (const auto& rock:environment::rocks()) contactPoint(rock.position,std::max(rock.scale.x,rock.scale.z)*0.9f);
     glUseProgram(0);
 }
 
@@ -92,12 +100,22 @@ void Renderer::draw(const Scene& scene, const Camera& camera, const WeatherSyste
     glDepthMask(GL_TRUE);
     glEnable(GL_DEPTH_TEST);
     effectsShader_.use();
+    glUniform1f(rainPass_,0);
+    const auto particleLight=weather.lighting.particleColor();
+    glUniform3fv(weatherLight_,1,glm::value_ptr(particleLight));
     const float density = weather.fogEnabled ? weather.lighting.fogDensity : 0.0f;
     glUniform3fv(effectsFogColor_, 1, glm::value_ptr(horizon));
     glUniform1f(effectsFogDensity_, density);
     glUniform3fv(effectsCameraPosition_, 1, glm::value_ptr(camera.position()));
     glUniform1f(effectsFogScale_, 1.0f);
     shader_.use();
+    const auto ambient=weather.lighting.ambientColor(), directional=weather.lighting.directionalColor(),
+               direction=weather.lighting.lightDirection();
+    glUniform3fv(lightDirection_,1,glm::value_ptr(direction));
+    glUniform3fv(ambientColor_,1,glm::value_ptr(ambient));
+    glUniform3fv(directionalColor_,1,glm::value_ptr(directional));
+    glUniform1f(windowStrength_,weather.lighting.windowStrength());
+    glUniform3fv(skyReflection_,1,glm::value_ptr(top));
     glUniform3fv(objectFogColor_, 1, glm::value_ptr(horizon));
     glUniform1f(objectFogDensity_, density);
     glUniform1f(flash_, weather.lighting.flash());
@@ -171,6 +189,7 @@ void Renderer::draw(const Scene& scene, const Camera& camera, const WeatherSyste
 
     if (weather.rainEnabled) {
         effectsShader_.use();
+        glUniform1f(rainPass_,1);
         glUniform1f(effectsFogScale_, 0.35f);
         glUniform1f(effectsIntensity_, 1.0f);
         glUniform1f(effectsSoftEdge_, 0.0f);
@@ -181,9 +200,12 @@ void Renderer::draw(const Scene& scene, const Camera& camera, const WeatherSyste
         if (rainRevision_ != weather.rain.revision()) {
             std::size_t i = 0;
             for (const auto& drop : weather.rain.drops()) {
-                const glm::vec4 color(0.66f, 0.80f, 0.94f, drop.opacity);
+                // Rain alone interprets color.xyz as velocity and edge as tail
+                // length. Both vertices store the head; the shader controls
+                // distance-dependent length without CPU/camera re-uploads.
+                const glm::vec4 color(drop.velocity,drop.opacity);
                 rainVertices_[i++] = {drop.position, color};
-                rainVertices_[i++] = {drop.position - glm::normalize(drop.velocity) * drop.length, color};
+                rainVertices_[i++] = {drop.position,color,drop.length};
             }
             rainBatch_.upload(rainVertices_.data(), rainVertices_.size());
             rainRevision_ = weather.rain.revision();
@@ -193,6 +215,7 @@ void Renderer::draw(const Scene& scene, const Camera& camera, const WeatherSyste
         glDepthMask(GL_FALSE);
         glLineWidth(1.0f);
         rainBatch_.draw();
+        glUniform1f(rainPass_,0);
         rainRendered_ = rainBatch_.vertexCount() / 2;
         lines_ += rainRendered_;
         ++drawCalls_;
@@ -299,6 +322,7 @@ void Renderer::draw(const Scene& scene, const Camera& camera, const WeatherSyste
         }
         effectsShader_.use();
         const auto vp = projection * view;
+        glUniform3f(weatherLight_,1,1,1); // Bolt core/halo keep their original white-blue colors.
         glUniform1f(effectsFogScale_, 0.2f);
         glUniform1f(effectsDistanceFade_, 0.0f);
         glUniform1f(effectsIntensity_, weather.lightning.flashIntensity());

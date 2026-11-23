@@ -6,8 +6,10 @@ in vec3 vLocalPosition;
 
 uniform vec3 uColor;
 uniform vec3 uLightDirection;
-uniform float uAmbient;
-uniform float uDiffuse;
+uniform vec3 uAmbientColor;
+uniform vec3 uDirectionalColor;
+uniform float uWindowStrength;
+uniform vec3 uSkyReflection;
 uniform float uCoverage;
 uniform float uFlash;
 uniform vec3 uFlashPosition;
@@ -25,6 +27,7 @@ uniform float uMaterialWetGloss;
 uniform vec3 uGroundColor;
 uniform vec4 uPuddles[3]; // center XZ, scale XZ; uploaded once
 uniform vec2 uPuddleRotation[3];
+uniform vec3 uContacts[7];
 
 out vec4 fragColor;
 
@@ -35,7 +38,14 @@ float moistureField(vec2 p) {
 }
 vec3 soilColor(float field, float wet) {
     vec3 soil = mix(vec3(0.255,0.265,0.215), uGroundColor, smoothstep(0.1,0.9,field));
-    return soil * mix(1.0,0.72,wet);
+    vec2 p=vWorldPosition.xz;
+    float pathX=-1.0+0.13*sin(p.y*0.7);
+    float path=(1.0-smoothstep(0.48,0.75,abs(p.x-pathX)))*smoothstep(1.3,1.7,p.y)*(1.0-smoothstep(9.2,9.8,p.y));
+    soil=mix(soil,vec3(0.30,0.275,0.235),path*0.8);
+    vec2 house=abs(p-vec2(-1.0,-1.0))-vec2(2.12,1.92);
+    float contact=0.11*(1.0-smoothstep(0.0,0.48,max(house.x,house.y)));
+    for (int i=0;i<7;++i) contact=max(contact,0.10*(1.0-smoothstep(0.0,uContacts[i].z,distance(p,uContacts[i].xy))));
+    return soil * mix(1.0,0.72,mix(wet,max(wet,uWetness*0.9),path))*(1.0-contact);
 }
 float waterInterior(vec2 world) {
     vec2 local = vec2(0.0);
@@ -84,6 +94,7 @@ void main() {
     float shininess = uMaterialKind == 0 ? mix(24.0, 64.0, uWetness) : uMaterialResponse.w;
     if (ground+water>0.5) shininess=mix(mix(18.0,42.0,localWet),72.0,water*interior);
     float sunSpec = pow(max(dot(N, halfSun / max(length(halfSun), 0.001)), 0.0), shininess);
+    sunSpec*=clamp(max(max(uDirectionalColor.r,uDirectionalColor.g),uDirectionalColor.b),0.0,1.0);
     float flashSpec = pow(max(dot(N, halfFlash / max(length(halfFlash), 0.001)), 0.0), shininess);
     float specular = min(0.45, (ground * localWet * 0.11 + water * mix(localWet*0.11,0.42,interior)) *
                           (sunSpec * 0.5 + flashSpec * uFlash * attenuation * 2.0));
@@ -110,16 +121,26 @@ void main() {
         // Large facets and a dark foot, not grain noise or metal-like highlights.
         detail = mix(0.73,1.0,smoothstep(-0.55,0.4,vLocalPosition.y)) *
                  (0.97+0.035*sin(dot(normalize(vNormal),vec3(3.1,1.7,4.3))));
+    } else if (uMaterialKind == 10) {
+        detail=mix(0.64,1.12,smoothstep(0.005,0.22,vLocalPosition.y));
     }
     specular = min(0.45, specular + (uMaterialResponse.z + uMaterialWetGloss * uWetness) *
                             (sunSpec * 0.5 + flashSpec * uFlash * attenuation * 1.8));
     vec3 color = base * detail * shade *
-                 (vec3(uAmbient * uMaterialResponse.x + uDiffuse * lambert * uMaterialResponse.y) +
+                 (uAmbientColor * uMaterialResponse.x + uDirectionalColor * lambert * uMaterialResponse.y +
                   flashLight * uMaterialResponse.y) +
                  vec3(0.7, 0.82, 1.0) * specular;
+    if (uMaterialKind==4) color+=vec3(0.58,0.255,0.065)*uWindowStrength;
+    if (uCloud<0.5) {
+        vec3 lamp=vec3(-1.0,1.65,1.1)-vWorldPosition;
+        float warm=0.20*uWindowStrength/(1.0+0.85*dot(lamp,lamp));
+        color+=base*vec3(1.0,0.58,0.25)*warm*(0.35+max(dot(N,normalize(lamp)),0.0));
+    }
     if (water>0.5) {
-        float fresnel=pow(1.0-max(dot(N,viewDirection),0.0),3.0);
-        color+=vec3(0.045,0.065,0.08)*interior*fresnel*(0.55+uFlash*attenuation);
+        float fresnel=0.02+0.98*pow(1.0-max(dot(N,viewDirection),0.0),5.0);
+        float skyAngle=clamp(reflect(-viewDirection,N).y,0.0,1.0);
+        vec3 reflection=mix(uFogColor,uSkyReflection,smoothstep(0.0,0.7,skyAngle));
+        color=mix(color,reflection,interior*clamp(fresnel*0.65,0.0,0.65));
         float broadGlint=pow(max(dot(N,halfFlash/max(length(halfFlash),0.001)),0.0),18.0);
         color+=vec3(0.12,0.17,0.22)*uFlash*attenuation*interior*(0.3+0.7*broadGlint);
     }

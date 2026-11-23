@@ -2,8 +2,9 @@
 
 Project Đồ họa máy tính trên Ubuntu: **C++17, OpenGL 3.3 Core, GLSL 330,
 FreeGLUT, GLEW, GLM và CMake**. Đã triển khai giai đoạn 1–5 và cải tiến hạng mục
-1–9 trên cùng kiến trúc. Báo cáo mới hạng mục 5–9 nằm ở cuối tài liệu;
-phần 1–4 được giữ làm lịch sử. **Chưa triển khai âm thanh (hạng mục 10).**
+1–9 trên cùng kiến trúc. Bản hiện tại có ánh sáng màu, cỏ/đường đi, vật liệu nước và đồng hồ ngày/đêm.
+[Báo cáo mới nhất và đối chứng](#visual-enhancement-và-daynight-system) nằm cuối tài liệu;
+các báo cáo 1–9 được giữ làm lịch sử. **Chưa triển khai âm thanh (hạng mục 10).**
 
 Cảnh gốc giữ nguyên: mặt đất 20 × 20 tại Y=0, một nhà, 4 cây, 3 đá và camera tự
 do. Có thêm trời tối, 4 cụm mây chuyển động, đúng **1.000 hạt mưa**, sét phân
@@ -69,7 +70,11 @@ liệu từ Internet. Có thể mở thư mục này bằng VS Code và dùng te
 | Space | Dừng/tiếp tục thời gian mô phỏng; camera vẫn điều khiển được |
 | 4 / 5 / 6 | Camera toàn cảnh / gần nhà / thấp gần mặt đất; chỉ đổi camera |
 | F | Bật/tắt distance fog |
-| R | Reset camera mặc định, toàn bộ weather/ripple/wetness, fog và các công tắc |
+| R | Reset camera/weather/fog; thời gian về 18:00, auto OFF, một ngày = 600 giây |
+| N | Chuyển nhanh 12:00 / 00:00 |
+| [ / ] | Giảm / tăng một giờ, wrap qua 00:00 |
+| T | Bật/tắt thời gian tự động trôi |
+| H | In thời gian, chế độ auto và hướng dẫn vào console |
 | Esc / nút đóng cửa sổ | Giải phóng tài nguyên OpenGL và thoát |
 
 Khi tạm dừng, các lệnh bật/tắt và L vẫn áp dụng tức thì; sét kích hoạt lúc này
@@ -78,7 +83,7 @@ hết vòng đời bình thường. R khôi phục mọi hiệu ứng về bật
 Khi ẩn cửa sổ, chế độ bình thường bỏ update/render; benchmark vẫn tiếp tục; khi con trỏ rời cửa sổ, xóa trạng thái
 phím để tránh kẹt di chuyển.
 
-Tiêu đề cập nhật mỗi giây, ví dụ `Storm | 60 FPS | R:1000 S:300 P:40 | L:ON C:ON F:ON`.
+Tiêu đề cập nhật mỗi giây, ví dụ `Storm | 60 FPS | 18:00 | R:1000 S:300 P:40 | L:ON C:ON F:ON`.
 P là số ripple active, F là trạng thái fog.
 R là số hạt mưa active khi bật, S là số slot splash còn sống, không phải capacity.
 L:ON = tự động bật/đang chờ; L:OFF = tự động tắt; L:FLASH = đợt đang active, kể cả
@@ -853,7 +858,270 @@ Checklist cuối:
 - [ ] Esc và nút đóng cửa sổ thoát bình thường.
 
 **Dừng sau hạng mục 9. Hạng mục 10 — âm thanh — chưa triển khai.**
+```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build -j$(nproc)
 ctest --test-dir build --output-on-failure
 ./build/rain_thunderstorm
+```
+
+
+## Visual Enhancement và Day/Night System
+
+Đã triển khai đúng năm hạng mục Lighting, Ground, Puddles, Rain và Day/Night.
+Giữ thế giới 20 × 20, nhà/cây đã nâng cấp, ba đá, bốn cụm mây, đúng 1.000 rain,
+splash capacity 512 và ripple capacity 48. Số baseline thực đọc từ source là
+**6.113 tam giác / 31 draw call**, vì workspace đã có nâng cấp môi trường sau
+lần nhà/cây; không dùng con số cũ 5.033/49 trong prompt làm baseline giả định.
+
+### Cách dùng
+
+```bash
+./build/rain_thunderstorm                    # 18:00 giông, auto OFF
+./build/rain_thunderstorm --hour 12          # ban ngày
+./build/rain_thunderstorm --hour 0           # ban đêm
+./build/rain_thunderstorm --hour 6.5         # 06:30
+./build/rain_thunderstorm --auto-time --day-duration 600
+```
+
+N chuyển noon/midnight; [ và ] đổi giờ; T bật/tắt tự trôi; H in thông tin.
+Space dừng cả thời tiết, sway cây và auto time, camera vẫn di chuyển. Đổi giờ
+thủ công khi pause vẫn áp dụng ngay, không reset wetness/splash/ripple. R về
+18:00, auto OFF và ngày dài 600 giây, kể cả khi lúc khởi chạy dùng cờ khác.
+Camera 4/5/6 không đổi giờ. Thanh tiêu đề có HH:MM và AUTO khi bật tự trôi.
+
+`--hour` nhận [0,24], 24 tương đương 00:00; có thể nhập giờ thập phân.
+`--day-duration` nhận [60,3600] giây; mặc định 600 (10 phút cho một ngày).
+Dữ liệu CLI không hữu hạn hoặc sai giới hạn bị từ chối trước khi tạo GUI/GPU
+resources. Đây là giờ mô phỏng, không đồng bộ đồng hồ hệ điều hành.
+
+### A — Lighting và color balance
+
+LightingSystem tiếp tục là nguồn ánh sáng chung. Ambient chuyển từ một scalar
+sang RGB xanh xám, nâng khả năng đọc mặt khuất. Directional có hướng, màu và
+cường độ theo giờ; ban ngày trung tính/vàng nhạt, đêm dùng nguồn trăng yếu màu
+xanh. Trời giông giảm cường độ/độ sáng trời theo trạng thái rain/cloud; không
+thêm lớp ambient thứ hai hoặc post-process.
+
+Cửa sổ Glass dùng emissive vàng ấm theo windowStrength: tắt ban ngày, tăng dần
+lúc chạng vạng, sáng ban đêm. Một point light nhẹ tại `(-1, 1.65, 1.1)`, gần cửa
+chính, dùng attenuation 1/(1+0,85*d²); không có shadow hoặc nội thất mới. Đóng
+góp màu được áp dụng trước fog, không làm toàn cảnh chuyển vàng.
+
+LightningSystem, pulse/core/halo và attenuation cũ giữ nguyên. Flash cộng tạm
+vào nguồn nền; thay giờ không xóa flash hoặc wetness. Bolt giữ màu trắng xanh,
+không bị nhân tint tối của các particle khác. Specular của nguồn định hướng
+cũng giảm khi nguồn sáng yếu; cửa sổ và sét không có bloom/HDR.
+
+### B — Ground environment
+
+Giữ quad ground tại Y=0 và mask ẩm world space hiện có. Đường đi từ bậc cửa
+hướng về +Z được tô bằng shader, hơi cong, màu nâu đất lạnh và mép mềm; không
+thêm một mesh/phẳng chồng dễ Z-fighting. Đường đi sẫm hơn khi mưa, dùng chung
+wetness toàn cảnh. Các mảng màu đất/cỏ/rêu chuyển tiếp rộng, không random theo
+pixel hoặc stochastic discard.
+
+Thêm **64 cụm cỏ thấp**, mỗi cụm ba lá tam giác có hai mặt hình học, tổng
+**384 tam giác, một mesh và một draw call**. RNG seed 824; sinh/upload một lần.
+Chiều cao 0,10–0,22, base Y=0,005. Vùng loại trừ gồm nhà/bậc thềm, đường đi,
+gốc cây, đá, biên cảnh và polygon nước có khoảng trống an toàn. Không vẽ từng
+lá hoặc cụm bằng draw call riêng, không thêm particle cỏ động.
+
+Contact shading tối tối đa khoảng 10–11%, chuyển tiếp nhẹ ở chân nhà, cây và
+đá. Đây là shading gần vị trí tiếp xúc, không phải bóng đổ. Không có vòng tròn
+đen cứng, displacement hoặc thay đổi cao độ va chạm.
+
+### C — Water và puddles
+
+Giữ nguyên ba polygon nước, batch chung và Surface hit test. Fresnel đổi sang
+Schlick với **F0=0,02**, lũy thừa 5, giới hạn ảnh hưởng. Màu phản xạ giả lập lấy
+từ sky top/horizon hiện tại theo góc nhìn, nên nước ban ngày xanh xám, ban đêm
+tối hơn và bắt sắc lạnh của chớp. Không phản chiếu hình ảnh nhà/cây/mây.
+
+Giữ Blinn–Phong, highlight rộng nhẹ khi chớp, bờ mềm hòa vào đất ướt và depth
+write của mặt nước opaque. Ripple trên nước có alpha/màu rõ hơn ripple trên
+đất; RGB còn nhân ánh sáng môi trường/flash để không sáng bất biến cả ngày lẫn
+đêm. Pool 48, vòng đời và giới hạn bán kính theo khoảng cách biên giữ nguyên;
+không tăng capacity hoặc tạo batch cho từng vòng.
+
+### D — Rain visual effects
+
+RainSystem/physics/seed, wind, gravity, recycling và impact không đổi. Vẫn đúng
+1.000 slot và một DynamicBatch GL_LINES, cùng VAO/VBO và dung lượng cũ.
+
+Hai vertex của vệt lưu cùng head; với rain pass, `color.xyz` chứa velocity,
+`color.a` chứa opacity và `edge` của tail chứa chiều dài theo tốc độ. Vertex
+shader dựng tail theo velocity và khoảng cách camera: hệ số dài 1,12 gần →
+0,62 xa, distance alpha 1 → 0,28, fade rất gần camera và opacity multiplier
+0,78 để bớt che chi tiết nhà. Các giá trị này có giới hạn, không thêm RNG mới.
+Khi đổi camera/giờ, vệt tự đổi trong shader mà không cần upload lại vì camera.
+
+Effects shader dùng tint từ LightingSystem cho rain/splash/ripple rồi áp dụng
+fog cũ; bolt được reset về tint trắng. Alpha blending bật và depth write tắt
+chỉ trong pass hiệu ứng, sau đó khôi phục. Hướng gió và va chạm Y=0 không đổi;
+rain impact vẫn phát splash và ripple theo cơ chế cũ.
+
+GL_LINES vẫn rộng một pixel; vệt xa trông nhỏ/mảnh hơn qua chiều dài và opacity,
+không giả nhận đã thêm độ rộng hình học hoặc anti-aliasing chuyên dụng. Không
+thêm mist pool hoặc volumetric fog trong lần này.
+
+### E — TimeOfDaySystem
+
+Module CPU riêng giữ hour dạng double trong [0,24), dayDuration và autoAdvance.
+Giờ wrap bằng fmod; modulo dt trước khi nhân giúp tránh overflow ở dt rất lớn.
+Từ chối NaN/Inf, dt âm và day duration ngoài giới hạn. Có xử lý trường hợp số
+âm rất nhỏ cộng 24 bị làm tròn thành 24, để invariant vẫn đúng.
+
+Clock tiến cùng fixed timestep 1/120 giây của WeatherSystem, nên độc lập FPS và
+dừng theo Space. Giữ chính sách clamp stall 0,1 giây của mô phỏng hiện có;
+không cố tiến bù nhiều giây sau khi cửa sổ bị treo. Chỉ refresh LightingSystem
+sau các bước update hoặc khi input đổi trạng thái; không tạo mesh/shader/GPU
+resource mới mỗi frame.
+
+Nội suy smoothstep 05–07 cho bình minh và 17–19 cho hoàng hôn; giữa là ngày,
+ngoài là đêm. Sky top/horizon, ambient, màu directional và windowStrength dùng
+cùng hệ số daylight/twilight. Sun direction là quỹ đạo sin/cos giả lập, cao lúc
+trưa và thấp ở bình minh/hoàng hôn; blend sang hướng trăng khi đêm. Qua 00:00
+không nhảy màu/hướng sáng. Sky shader cũ nhận uniform mới từ nguồn Lighting,
+không có shader trời hoặc renderer thứ hai.
+
+### Performance — đối chứng cùng điều kiện
+
+Debug/GCC 15.2, 800 × 600, camera 4, fog ON/density 0,018, rain/cloud/sét tự
+động ON, seed mặc định, mỗi lượt 15 giây, không input. Cùng RTX 3050 Laptop,
+Mesa 26.0.8/zink/NVK/OpenGL 4.6 Core. Bản trước build từ snapshot bằng cùng
+compiler; bản sau ở mặc định **18:00, auto OFF**. Khác biệt hình ảnh/ánh sáng
+là một phần của nâng cấp; resolution, workload weather và phương pháp đo giữ
+nguyên. Cả hai đã được chạy trước cặp đo cuối để có shader cache.
+
+| Chỉ số | Trước | Sau |
+|---|---:|---:|
+| Frame / thời gian thực | 933 / 15,0154 s | 931 / 15,0022 s |
+| FPS, timer 16 ms | 62,1363 | 62,0576 |
+| Mean frame interval | 16,0936 ms | 16,1141 ms |
+| P95 / P99 | 16,8061 / 17,0065 ms | 16,8539 / 17,0082 ms |
+| CPU render submit wall/frame | 0,457710 ms | 0,499433 ms |
+| GPU command/frame | 0,451867 ms | 0,512323 ms |
+| RSS gần cuối / peak | 94,1836 / 94,1953 MiB | 94,7578 / 94,7656 MiB |
+| CPU usage, một core = 100% | 7,21827% | 7,87331% |
+| Tam giác tĩnh | 2.880 | 3.264 |
+| Tam giác tối đa đo được | 6.113 | **6.497** |
+| Draw call tối đa | 31 | **32** |
+| GL_LINES tối đa, tính riêng | 1.935 | 1.935 |
+| Rain / đợt sét | 1.000 / 3 | 1.000 / 3 |
+| Splash rejected / mẫu pool đầy | 0 / 0 | 0 / 0 |
+
+[Log trước](build/reports/daynight-before/capped-final.log),
+[log sau](build/reports/daynight-after/capped-final.log).
+
+| Bỏ timer cap, swap interval báo 0 | Trước | Sau |
+|---|---:|---:|
+| FPS | 143,930 | 143,590 |
+| Mean frame interval | 6,94781 ms | 6,96425 ms |
+| CPU submit | 0,379423 ms | 0,291673 ms |
+| GPU command | 0,380897 ms | 0,392293 ms |
+| RSS gần cuối / peak | 94,7617 / 94,7852 MiB | 95,2500 / 95,2773 MiB |
+
+[Trước, bỏ cap](build/reports/daynight-before/unlocked.log),
+[sau, bỏ cap](build/reports/daynight-after/unlocked.log).
+
+Cặp timer cuối tăng **384 tam giác, một draw call, CPU submit 0,042 ms,
+GPU command 0,060 ms và RSS 0,574 MiB**. Geometry tăng chỉ do cỏ gộp mesh;
+shading thêm contact/path, RGB lighting, Schlick và thời gian. Chi phí ngắn hạn
+còn nhỏ trong lượt đo, không cần giảm chất lượng thời tiết để bù. CPU của rain
+chuyển phần dựng tail sang vertex shader nhưng các số này không chứng minh
+mọi mode đều nhanh hơn. **Không khẳng định FPS cải thiện từ số bị timer cap.**
+Cặp bỏ cap giảm khoảng 0,24%, chưa thấy throughput giảm lớn trong lượt 15 giây;
+không suy rộng thành bảo đảm dài hạn hoặc GPU yếu.
+
+Cận trên nếu dùng hết capacity sét 128 segment là 6.689 tam giác; rain/splash/
+ripple là lines tính riêng. Không đổi Benchmark.cpp: CPU submit không gồm
+simulation/timer/swap; GPU command là GL_TIME_ELAPSED, không phải presentation
+hoặc utilization; RSS không phải VRAM. Không suy ra FPS tối đa từ GPU time.
+
+### Testing và các giới hạn
+
+- Build/CTest và GUI smoke sau từng nhóm Lighting, Ground, Puddles, Rain và Time.
+- **CTest 5/5 đạt**: geometry/camera, weather, procedural models, environment và
+  lighting_and_time. Test mới kiểm tra wrap, bounds, FPS independence, pause/
+  resume, midnight continuity, sky/ambient/direction, windows, storm darkening,
+  flash day/night và bảo toàn wetness/particles khi đổi giờ.
+- **AddressSanitizer/UBSan/LeakSanitizer 5/5 đạt** cho CPU tests. Không khẳng định
+  đã kiểm tra leak trong driver GPU.
+- **GUI OpenGL 3.3 Core / GLSL 3.30, depth 24 đạt**, không GL error; input mới,
+  R/Space/preset, resize, render state và cleanup đều được kiểm tra.
+- Tách lighting khỏi phép đo pixel khi toggle cloud/rain để không đếm sự đổi
+  màu bầu trời thành pixel hiệu ứng: cloud 20.247, rain 4.074, splash 241,
+  ripple 225, bolt 961 pixel trong capture kiểm soát.
+- Probe trung vị RGB đất khô/ướt 45/38, đất ban ngày/đêm 63/23, nước trước/
+  chớp 39/77; đây là giá trị pixel, không phải luminance vật lý. Night flash có
+  0 pixel trắng cả ba kênh >248; không suy ra không có highlight sáng cục bộ.
+- Mây fade coverage 0,507495 vẫn có 3.535 pixel blend không ghi depth, framebuffer
+  lặp lại giống nhau. Sway cây vẫn đạt, không thay geometry hoặc rain revision.
+- Smoke chạy trực tiếp với `--hour 0` và `--hour 12` đều đạt. Bảy CLI time input
+  sai được từ chối trước GUI. Chạy auto 5 giây từ 23,9 giờ với ngày 60 giây qua
+  midnight tới 1,89667 (01:53), không GL error hoặc crash.
+
+[CTest](build/reports/daynight-after/ctest.log),
+[sanitizer](build/reports/daynight-after/sanitize.log),
+[GL 3.3 smoke](build/reports/daynight-after/smoke-gl33.log),
+[start night](build/reports/daynight-after/smoke-start-night.log),
+[start day](build/reports/daynight-after/smoke-start-day.log),
+[auto qua midnight](build/reports/daynight-after/auto-midnight.log).
+
+Đối chiếu source xác nhận không đổi RainSystem, SplashSystem, RippleSystem,
+LightningSystem, CloudSystem, Camera, ModelGeometry, Surface, Mesh, Shader,
+DynamicBatch, Benchmark và sky/vertex-object shaders. Nhà/cây/đá/mây giữ mesh và
+transform cũ. WeatherSystem chỉ thêm clock và refresh lighting; fixed timestep,
+wind, impact, pool và các cơ chế thời tiết cũ giữ nguyên. Không thêm audio,
+Dear ImGui, texture, shadow mapping, PBR phức tạp, ray tracing, HDR/bloom hoặc
+volumetric lighting.
+
+Giới hạn: không bóng đổ thật, nước là phản xạ màu trời giả lập, ground không có
+địa hình cao độ mới, cỏ tĩnh và ít, rain lines một pixel, không rain mist mới.
+Sun/moon là nguồn sáng giả lập, không thiên văn chính xác. Chưa đo VRAM, GPU
+khác hoặc soak 600 giây cho bản này; các log soak cũ thuộc phiên bản trước.
+
+### Ảnh framebuffer và file sửa
+
+Ảnh OpenGL thật 800 × 600, PPM chuyển PNG lossless; không ảnh dựng/AI thay
+renderer. Các ảnh đối chiếu preset 4/5/6 giữ cùng camera và pha weather kiểm soát.
+
+| Góc | Trước | Sau mặc định 18:00 |
+|---|---|---|
+| 4 / toàn cảnh | [trước](build/reports/daynight-before/camera-4.png) | [sau](build/reports/daynight-after/camera-4.png) |
+| 5 / nhà, mưa | [trước](build/reports/daynight-before/camera-5.png) | [sau](build/reports/daynight-after/camera-5.png) |
+| 6 / đất, vũng nước | [trước](build/reports/daynight-before/camera-6.png) | [sau](build/reports/daynight-after/camera-6.png) |
+
+Các pha giờ cùng camera/weather: [12:00](build/reports/daynight-after/day-12.png),
+[18:00](build/reports/daynight-after/sunset-18.png),
+[00:00](build/reports/daynight-after/night-00.png),
+[đêm + sét](build/reports/daynight-after/night-lightning.png),
+[ngày + sét](build/reports/daynight-after/day-lightning.png).
+
+[Nhà ban đêm](build/reports/daynight-after/night-house.png),
+[nước ban ngày](build/reports/daynight-after/day-puddle.png),
+[nước ban đêm](build/reports/daynight-after/night-puddle.png),
+[đất ướt](build/reports/daynight-after/ground-wet.png),
+[đất khô](build/reports/daynight-after/ground-dry.png).
+Artifact trong build/reports được gitignore. Chụp lại toàn bộ bằng CLI hiện có:
+
+```bash
+mkdir -p build/reports/daynight-after
+./build/rain_thunderstorm --smoke-test \
+  --capture build/reports/daynight-after/overview.ppm \
+  --capture-lightning build/reports/daynight-after/flash.ppm \
+  --capture-views build/reports/daynight-after \
+  --capture-cloud-wrap build/reports/daynight-after/cloud-wrap.ppm
+```
+
+File mới: `include/TimeOfDaySystem.hpp`, `src/TimeOfDaySystem.cpp`,
+`tests/lighting_time_tests.cpp`.
+
+File chỉnh sửa: `include/LightingSystem.hpp`, `src/LightingSystem.cpp`,
+`include/WeatherSystem.hpp`, `src/WeatherSystem.cpp`, `include/Application.hpp`,
+`src/Application.cpp`, `src/main.cpp`, `include/Renderer.hpp`, `src/Renderer.cpp`,
+`include/EnvironmentGeometry.hpp`, `src/EnvironmentGeometry.cpp`,
+`src/Scene.cpp`, `include/Material.hpp`, `shaders/object.frag`,
+`shaders/effects.vert`, `shaders/effects.frag`, `tests/environment_tests.cpp`,
+`CMakeLists.txt`, `README.md`.

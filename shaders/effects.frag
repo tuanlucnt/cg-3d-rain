@@ -8,11 +8,12 @@ uniform vec3 uCameraPosition;
 uniform vec3 uFogColor;
 uniform float uFogDensity;
 uniform float uFogScale;
+uniform vec3 uWeatherLight;
 out vec4 fragColor;
 void main() {
     float softness = 1.0 - smoothstep(0.35, 1.0, abs(vEdge));
     float nearFade = smoothstep(0.5, 1.5, distance(vWorldPosition, uCameraPosition));
     float alpha = vColor.a * uIntensity * mix(1.0, softness * nearFade, uSoftEdge);
     float fog = exp(-uFogDensity * uFogScale * max(distance(vWorldPosition, uCameraPosition) - 6.0, 0.0));
-    fragColor = vec4(mix(uFogColor, vColor.rgb, fog), alpha);
+    fragColor = vec4(mix(uFogColor, vColor.rgb*uWeatherLight, fog), alpha);
 }

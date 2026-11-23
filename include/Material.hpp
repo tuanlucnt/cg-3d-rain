@@ -1,7 +1,7 @@
 #pragma once
 #include <glm/glm.hpp>
 
-enum class MaterialKind { Plain, Plaster, RoofTile, Wood, Glass, Stone, Foliage, Brick, Metal, Rock };
+enum class MaterialKind { Plain, Plaster, RoofTile, Wood, Glass, Stone, Foliage, Brick, Metal, Rock, Grass };
 
 struct Material {
     MaterialKind kind = MaterialKind::Plain;

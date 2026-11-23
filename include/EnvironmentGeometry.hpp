@@ -12,4 +12,8 @@ const std::array<RockInstance,3>& rocks();
 // One closed skin extracted from the five overlapping lobe density fields.
 // Expensive field evaluation happens only at renderer initialization.
 std::vector<Vertex> cloud(const CloudCluster& cluster);
+struct GrassTuft { glm::vec3 position; float height, angle; };
+bool grassAllowed(glm::vec2 position);
+const std::array<GrassTuft,64>& grassTufts();
+std::vector<Vertex> grass();
 }

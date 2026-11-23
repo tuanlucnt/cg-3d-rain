@@ -10,6 +10,7 @@ void WeatherSystem::reset() {
     rain.reset(windVelocity);
     lightning.reset();
     lighting.reset();
+    timeOfDay.reset();
     splashes.reset();
     ripples.reset();
     cloudsEnabled = true;
@@ -18,13 +19,20 @@ void WeatherSystem::reset() {
     paused = false;
     fogEnabled = true;
     accumulator_ = 0;
+    refreshLighting();
+}
+
+void WeatherSystem::refreshLighting() {
+    const float storm=cloudsEnabled ? (rainEnabled ? 0.9f : 0.55f) : (rainEnabled ? 0.45f : 0.0f);
+    lighting.setEnvironment(static_cast<float>(timeOfDay.hour()),storm);
 }
 
 void WeatherSystem::update(float deltaTime) {
-    if (paused || !std::isfinite(deltaTime) || deltaTime <= 0) return;
+    if (paused || !std::isfinite(deltaTime) || deltaTime <= 0) { refreshLighting(); return; }
     accumulator_ += std::min(deltaTime, 0.1f);
     constexpr double step = 1.0 / 120.0;
     while (accumulator_ + 1e-7 >= step) {
+        timeOfDay.update(step);
         if (cloudsEnabled) clouds.update(static_cast<float>(step), windVelocity);
         if (rainEnabled) rain.update(static_cast<float>(step), windVelocity);
         lightning.update(static_cast<float>(step), clouds, lightningEnabled, observerPosition);
@@ -41,6 +49,7 @@ void WeatherSystem::update(float deltaTime) {
         lighting.update(lightning.flashIntensity(), static_cast<float>(step), rainEnabled);
         accumulator_ = std::max(0.0, accumulator_ - step);
     }
+    refreshLighting();
 }
 
 void WeatherSystem::triggerLightning() {
@@ -56,6 +65,7 @@ void WeatherSystem::toggleLightning() {
 }
 
 bool WeatherSystem::valid() const {
+    if (!std::isfinite(timeOfDay.hour()) || timeOfDay.hour()<0 || timeOfDay.hour()>=24) return false;
     const auto finite = [](glm::vec3 p) { return std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z); };
     if (!std::isfinite(lighting.wetness()) || lighting.wetness() < 0 || lighting.wetness() > 1 ||
         !std::isfinite(lighting.flash()) || lighting.flash() < 0 || lighting.flash() > 1) return false;

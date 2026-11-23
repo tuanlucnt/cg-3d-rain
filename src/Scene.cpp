@@ -10,7 +10,7 @@
 Scene::Scene()
     : ground_(geometry::ground()), puddle_(environment::puddles()) {
     objects_.reserve(32);
-    modelMeshes_.reserve(20);
+    modelMeshes_.reserve(21);
     add(ground_, {0, 0, 0}, {1, 1, 1}, surface::GROUND_COLOR);
     objects_.back().ground = true;
     add(puddle_, {0,0,0}, {1,1,1}, {0.115f,0.19f,0.22f});
@@ -47,6 +47,7 @@ Scene::Scene()
         add(*modelMeshes_.back(),instance.position,instance.scale,instance.color,instance.yaw);
         objects_.back().material={MaterialKind::Rock,{1,1,0.012f,12},0.018f};
     }
+    modelPart(environment::grass(),{0,0,0},{0.23f,0.35f,0.19f},{MaterialKind::Grass,{1,1,0,16},0});
 }
 
 void Scene::modelPart(const std::vector<Vertex>& vertices, glm::vec3 position,

@@ -14,6 +14,20 @@ int main(int argc, char** argv) {
             const std::string argument = argv[i];
             if (argument == "--smoke-test") options.smokeTest = true;
             else if (argument == "--no-fog") options.noFog = true;
+            else if (argument == "--auto-time") options.autoTime = true;
+            else if ((argument == "--hour" || argument == "--day-duration") && i+1<argc) {
+                const std::string value=argv[++i];
+                std::size_t n=0;
+                const double parsed=std::stod(value,&n);
+                if (n!=value.size() || !std::isfinite(parsed)) throw std::invalid_argument("Time argument must be a finite number");
+                if (argument=="--hour") {
+                    if (parsed<0 || parsed>24) throw std::invalid_argument("Hour must be in [0,24]");
+                    options.hour=parsed;
+                } else {
+                    if (parsed<60 || parsed>3600) throw std::invalid_argument("Day duration must be in [60,3600] seconds");
+                    options.dayDuration=parsed;
+                }
+            }
             else if (argument == "--fog-density" && i + 1 < argc) {
                 const std::string value = argv[++i];
                 std::size_t n = 0;
@@ -43,8 +57,10 @@ int main(int argc, char** argv) {
                           << "       rain_thunderstorm --benchmark <seconds, max 600>\n"
                           << "       rain_thunderstorm --benchmark-unlocked <seconds> [--no-fog]\n"
                           << "       --fog-density <0..0.1> | --capture-views <directory> (smoke only)\n"
+                          << "       --hour <0..24> | --auto-time | --day-duration <60..3600 seconds>\n"
                           << "WASD/QE: move; left mouse drag: look; 1/2/3: rain/lightning/clouds; "
-                             "L: flash; F: fog; 4/5/6: camera presets; Space: pause; R: reset; Esc: exit\n";
+                             "L: flash; F: fog; 4/5/6: camera presets; Space: pause; R: reset; Esc: exit\n"
+                          << "N: day/night; [ / ]: hour; T: auto time; H: time/help\n";
                 return 0;
             } else {
                 throw std::invalid_argument("Unknown or incomplete argument: " + argument);

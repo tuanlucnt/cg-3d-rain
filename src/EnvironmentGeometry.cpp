@@ -1,5 +1,6 @@
 #include "EnvironmentGeometry.hpp"
 #include "Surface.hpp"
+#include "ModelGeometry.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -15,6 +16,52 @@ void triangle(std::vector<Vertex>& mesh, glm::vec3 a, glm::vec3 b, glm::vec3 c, 
 }
 
 namespace environment {
+bool grassAllowed(glm::vec2 p) {
+    if (std::abs(p.x)>9.6f || std::abs(p.y)>9.6f) return false;
+    if (p.x> -3.5f && p.x<1.5f && p.y> -3.3f && p.y<1.95f) return false;
+    const float pathX=-1+0.13f*std::sin(p.y*0.7f);
+    if (p.y>1.2f && std::abs(p.x-pathX)<0.95f) return false;
+    for (const auto& tree:models::treeLayout())
+        if (glm::distance(p,glm::vec2(tree.position.x,tree.position.z))<0.7f) return false;
+    for (const auto& rock:rocks())
+        if (glm::distance(p,glm::vec2(rock.position.x,rock.position.z))<std::max(rock.scale.x,rock.scale.z)*1.2f+0.25f) return false;
+    for (glm::vec2 offset:{glm::vec2(0),glm::vec2(0.2f,0),glm::vec2(-0.2f,0),glm::vec2(0,0.2f),glm::vec2(0,-0.2f)})
+        if (surface::waterMargin({p.x+offset.x,0,p.y+offset.y})>0) return false;
+    return true;
+}
+
+const std::array<GrassTuft,64>& grassTufts() {
+    static const auto tufts=[] {
+        std::array<GrassTuft,64> result{};
+        std::mt19937 rng(824);
+        std::uniform_real_distribution<float> coordinate(-9.5f,9.5f),unit(0,1);
+        std::size_t count=0;
+        for (unsigned attempt=0;count<result.size() && attempt<4096;++attempt) {
+            const glm::vec2 p(coordinate(rng),coordinate(rng));
+            if (!grassAllowed(p)) continue;
+            result[count++]={{p.x,0.005f,p.y},0.10f+unit(rng)*0.12f,unit(rng)*6.2831853f};
+        }
+        if (count!=result.size()) throw std::runtime_error("Cannot fit bounded grass tufts in the environment");
+        return result;
+    }();
+    return tufts;
+}
+
+std::vector<Vertex> grass() {
+    std::vector<Vertex> mesh;
+    mesh.reserve(grassTufts().size()*18);
+    for (const auto& tuft:grassTufts()) for (unsigned blade=0;blade<3;++blade) {
+        const float angle=tuft.angle+blade*2.0943951f;
+        const glm::vec3 side(std::cos(angle)*0.045f,0,std::sin(angle)*0.045f);
+        const auto a=tuft.position-side,b=tuft.position+side;
+        const auto c=tuft.position+glm::vec3(side.x*0.6f,tuft.height*(1-blade*0.12f),side.z*0.6f);
+        // Both sides are explicit triangles: keep culling enabled globally.
+        const auto n=glm::normalize(glm::cross(b-a,c-a));
+        triangle(mesh,a,b,c,n); triangle(mesh,c,b,a,-n);
+    }
+    return mesh;
+}
+
 std::vector<Vertex> puddles() {
     std::vector<Vertex> mesh;
     mesh.reserve(surface::puddles().size()*surface::OUTLINE_POINTS*3);

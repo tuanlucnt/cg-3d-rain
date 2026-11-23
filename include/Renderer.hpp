@@ -15,6 +15,7 @@ public:
     std::size_t renderedRainCount() const { return rainRendered_; }
     std::size_t renderedSplashCount() const { return splashRendered_; }
     std::uint64_t lightningUploadCount() const { return lightningBatch_.uploadCount(); }
+    std::uint64_t rainUploadCount() const { return rainBatch_.uploadCount(); }
     std::size_t triangles() const { return triangles_; }
     std::size_t lines() const { return lines_; }
 
@@ -50,6 +51,9 @@ private:
     GLint effectsFogColor_, effectsFogDensity_, effectsFogScale_;
     GLint materialKind_, materialResponse_, materialWetGloss_;
     GLint treeHeight_, modelTime_, treeWind_;
+    GLint lightDirection_, ambientColor_, directionalColor_, windowStrength_, weatherLight_;
+    GLint skyReflection_;
+    GLint rainPass_;
     std::size_t drawCalls_ = 0, rainRendered_ = 0, splashRendered_ = 0;
     std::size_t triangles_ = 0, lines_ = 0;
 };

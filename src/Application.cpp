@@ -131,6 +131,10 @@ void Application::initialize(char* executableName) {
     scene_ = std::make_unique<Scene>();
     weather_.fogEnabled = !options_.noFog;
     weather_.lighting.fogDensity = options_.fogDensity;
+    weather_.timeOfDay.setHour(options_.hour);
+    weather_.timeOfDay.setDayDuration(options_.dayDuration);
+    weather_.timeOfDay.setAutoAdvance(options_.autoTime);
+    weather_.refreshLighting();
     if (options_.benchmarkSeconds > 0) benchmark_ = std::make_unique<Benchmark>(options_.unlocked);
     reshape(width_, height_);
     checkOpenGL("Initialization (shader/mesh/state)");
@@ -140,6 +144,7 @@ void Application::initialize(char* executableName) {
               << "WASD: move | Q/E: down/up | left mouse drag: look | R: reset | Esc: exit\n";
     std::cout << "Weather: 1=rain (1000), 2=random lightning, 3=clouds, L=manual lightning, "
                  "Space=pause (camera remains free); splash pool=512\n";
+    printTimeHelp();
     glutIgnoreKeyRepeat(1);
     glutDisplayFunc(displayCallback);
     glutReshapeFunc(reshapeCallback);
@@ -182,6 +187,8 @@ void Application::tick() {
         benchmark_->report(std::cout, elapsed, frames_);
         std::cout << "Splash requests=" << weather_.splashes.requests() << " filtered=" << weather_.splashes.filtered()
                   << " rejected=" << weather_.splashes.rejected() << "; ripple rejected=" << weather_.ripples.rejected() << '\n';
+        std::cout<<"TIME hour="<<weather_.timeOfDay.hour()<<" label="<<weather_.timeOfDay.label()
+                 <<" auto="<<weather_.timeOfDay.autoAdvance()<<" day_seconds="<<weather_.timeOfDay.dayDuration()<<'\n';
         requestExit();
         return;
     }
@@ -241,11 +248,23 @@ void Application::key(unsigned char value, bool pressed) {
     }
     if (lower == ' ') weather_.paused = !weather_.paused;
     if (lower == 'f') weather_.fogEnabled = !weather_.fogEnabled;
+    if (lower == 'n') weather_.timeOfDay.toggleDayNight();
+    if (lower == '[') weather_.timeOfDay.shiftHours(-1);
+    if (lower == ']') weather_.timeOfDay.shiftHours(1);
+    if (lower == 't') weather_.timeOfDay.setAutoAdvance(!weather_.timeOfDay.autoAdvance());
+    if (lower == 'h') printTimeHelp();
     if (lower >= '4' && lower <= '6') {
         camera_.preset(lower - '4');
         weather_.observerPosition = camera_.position();
         releaseInput();
     }
+    weather_.refreshLighting();
+}
+
+void Application::printTimeHelp() const {
+    std::cout<<"Time "<<weather_.timeOfDay.label()<<" | auto="<<(weather_.timeOfDay.autoAdvance()?"ON":"OFF")
+             <<" | day="<<weather_.timeOfDay.dayDuration()<<" seconds\n"
+             <<"N: day/night (12:00 / 00:00) | [ / ]: -/+ 1 hour | T: auto time | H: time/help\n";
 }
 
 void Application::updateStatistics(Clock::time_point now) {
@@ -258,8 +277,8 @@ void Application::updateStatistics(Clock::time_point now) {
     }
     std::array<char, 128> title{};
     std::snprintf(title.data(), title.size(),
-        "Storm | %.0f FPS | R:%zu S:%zu P:%zu | L:%s C:%s F:%s%s",
-        fps, weather_.rainEnabled ? RainSystem::RAIN_COUNT : std::size_t(0),
+        "Storm | %.0f FPS | %s%s | R:%zu S:%zu P:%zu | L:%s C:%s F:%s%s",
+        fps,weather_.timeOfDay.label().c_str(),weather_.timeOfDay.autoAdvance()?" AUTO":"",weather_.rainEnabled ? RainSystem::RAIN_COUNT : std::size_t(0),
         weather_.splashes.activeCount(),
         weather_.ripples.activeCount(),
         weather_.lightning.active() ? "FLASH" : (weather_.lightningEnabled ? "ON" : "OFF"),
@@ -380,6 +399,8 @@ void Application::smokeStep() {
                 renderer_->renderedSplashCount() == weather_.splashes.activeCount(),
                 "Submitted particle counts must match active counts (not pool capacity)");
         const auto baseline = readColor(width_, height_);
+        const auto baselineLighting=weather_.lighting;
+        const auto baselineHour=weather_.timeOfDay.hour();
         std::vector<float> baselineDepth(static_cast<std::size_t>(width_) * height_);
         glReadPixels(0, 0, width_, height_, GL_DEPTH_COMPONENT, GL_FLOAT, baselineDepth.data());
         const auto renderAndRead = [&] {
@@ -389,12 +410,14 @@ void Application::smokeStep() {
         };
         key('3', true); key('3', false);
         require(!weather_.cloudsEnabled, "Cloud input toggle failed");
+        weather_.lighting=baselineLighting; // Isolate mesh pixels from storm-darkening changes.
         const auto cloudPixels = changedPixels(baseline, renderAndRead());
         require(cloudPixels > 1000, "Clouds must visibly contribute pixels");
         key('3', true); key('3', false);
         key('1', true); key('1', false);
         require(!weather_.rainEnabled && weather_.rain.drops().size() == 1000,
                 "Rain toggle must preserve the 1000-particle pool");
+        weather_.lighting=baselineLighting;
         const auto rainPixels = changedPixels(baseline, renderAndRead());
         require(rainPixels > 250, "Rain must visibly contribute pixels");
         key('1', true); key('1', false);
@@ -437,6 +460,8 @@ void Application::smokeStep() {
         require(weather_.rainEnabled && weather_.cloudsEnabled && weather_.lightningEnabled &&
                 !weather_.paused && weather_.splashes.activeCount() == 0 &&
                 weather_.lighting.flash() == 0, "R must reset the entire weather state");
+        require(weather_.timeOfDay.hour()==18 && !weather_.timeOfDay.autoAdvance(),"R must reset time independently of CLI start settings");
+        weather_.timeOfDay.setHour(baselineHour); weather_.refreshLighting();
         for (int i = 0; i < 5; ++i) weather_.update(0.1f);
         key('2', true);
         key('2', false);
@@ -551,6 +576,66 @@ void Application::smokeStep() {
         std::cout<<"Environment probe luminance: dry/wet soil="<<drySoil<<'/'<<wetSoil
                  <<", water before/flash="<<waterBefore<<'/'<<waterAfter<<'\n';
         weather_.lighting=savedLighting;
+        const auto savedWeather=weather_;
+        const auto clockRainUploads=renderer_->rainUploadCount();
+        weather_.timeOfDay.setHour(18); weather_.refreshLighting();
+        key('n',true); key('n',false);
+        require(weather_.timeOfDay.hour()==12,"N must select noon from the default evening");
+        renderAndRead();
+        require(renderer_->rainUploadCount()==clockRainUploads,"Hour changes must not upload rain geometry");
+        key('n',true); key('n',false);
+        require(weather_.timeOfDay.hour()==0,"N must toggle noon to midnight");
+        key('[',true); key('[',false);
+        require(weather_.timeOfDay.hour()==23,"[ must wrap back one hour");
+        key(']',true); key(']',false);
+        key('t',true); key('t',false);
+        key(' ',true); key(' ',false);
+        const auto clockWet=weather_.lighting.wetness();
+        const auto clockRain=weather_.rain.drops()[0].position;
+        update(0.1f);
+        require(weather_.timeOfDay.hour()==0 && weather_.timeOfDay.autoAdvance(),"Space must pause auto time without disabling its mode");
+        key(']',true); key(']',false);
+        require(weather_.timeOfDay.hour()==1 && weather_.lighting.wetness()==clockWet && weather_.rain.drops()[0].position==clockRain,
+                "Manual hour changes while paused must preserve wetness and particles");
+        for (unsigned char preset:{'4','5','6'}) { key(preset,true); key(preset,false); }
+        require(weather_.timeOfDay.hour()==1,"Camera presets must not change time");
+        key(' ',true); key(' ',false); update(0.1f);
+        require(weather_.timeOfDay.hour()>1 && weather_.valid(),"Resume must advance time and weather safely");
+        key('r',true); key('r',false);
+        require(weather_.timeOfDay.hour()==18 && !weather_.timeOfDay.autoAdvance(),"R must restore default hour and auto OFF");
+        weather_=savedWeather; camera_.reset();
+        const auto captureTime=[&](const char* name) {
+            if (!options_.viewCaptureDirectory.empty())
+                inspectFramebuffer((std::filesystem::path(options_.viewCaptureDirectory)/name).string());
+        };
+        weather_.timeOfDay.setHour(12); weather_.refreshLighting();
+        const auto dayPixels=renderAndRead(); captureTime("day-12.ppm");
+        weather_.timeOfDay.setHour(18); weather_.refreshLighting();
+        renderAndRead(); captureTime("sunset-18.ppm");
+        weather_.timeOfDay.setHour(0); weather_.refreshLighting();
+        const auto nightPixels=renderAndRead(); captureTime("night-00.ppm");
+        const int daySoil=sample(dayPixels,{0,0,8}),nightSoil=sample(nightPixels,{0,0,8});
+        require(changedPixels(dayPixels,nightPixels)>5000 && daySoil>nightSoil+8,
+                "Day/night must visibly change the sky and environment lighting");
+        weather_.triggerLightning();
+        const auto nightFlash=renderAndRead(); captureTime("night-lightning.ppm");
+        require(changedPixels(nightPixels,nightFlash)>5000,"Night flash must remain clearly visible");
+        std::size_t white=0;
+        for (std::size_t i=0;i<nightFlash.size();i+=3)
+            if (nightFlash[i]>248 && nightFlash[i+1]>248 && nightFlash[i+2]>248) ++white;
+        require(white<static_cast<std::size_t>(width_)*height_/100,"Night lightning must not wash out the scene");
+        weather_.timeOfDay.setHour(12); weather_.refreshLighting();
+        const auto dayFlash=renderAndRead(); captureTime("day-lightning.ppm");
+        require(changedPixels(dayPixels,dayFlash)>1000,"Daytime flash must remain visible");
+        weather_=savedWeather; camera_.preset(2);
+        weather_.timeOfDay.setHour(12); weather_.refreshLighting();
+        renderAndRead(); captureTime("day-puddle.ppm");
+        weather_.timeOfDay.setHour(0); weather_.refreshLighting();
+        renderAndRead(); captureTime("night-puddle.ppm");
+        camera_.preset(1); renderAndRead(); captureTime("night-house.ppm");
+        std::cout<<"Day/night soil probe="<<daySoil<<'/'<<nightSoil
+                 <<"; night flash white pixels="<<white<<"; time input/pause/reset/presets passed\n";
+        weather_=savedWeather; camera_.reset();
         for (unsigned i = 0; i < 3; ++i) {
             key(static_cast<unsigned char>('4' + i), true);
             renderer_->draw(*scene_, camera_, weather_, width_, height_);

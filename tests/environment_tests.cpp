@@ -108,8 +108,22 @@ void cloudTests() {
     }
     std::cout<<"PASS clouds: four closed blended skins, density/normal agreement, 728 triangles each\n";
 }
+void grassTests() {
+    const auto mesh=environment::grass();
+    valid(mesh,false);
+    require(mesh.size()/3==384,"Grass must remain one bounded mesh, six triangles per tuft");
+    for (const auto& tuft:environment::grassTufts()) {
+        require(environment::grassAllowed({tuft.position.x,tuft.position.z}),"Grass overlaps a protected footprint or water");
+        require(tuft.height>=0.10f && tuft.height<=0.22f,"Grass must remain low and bounded");
+    }
+    for (const auto& v:mesh) require(v.position.y>=0.005f && v.position.y<0.23f &&
+        std::abs(v.position.x)<10 && std::abs(v.position.z)<10,"Grass exceeded the ground footprint");
+    require(!environment::grassAllowed({-1,2}) && !environment::grassAllowed({-2,4.5f}) &&
+            !environment::grassAllowed({-1,0}),"Grass exclusions must cover path, puddles and house");
+    std::cout<<"PASS grass: 64 cached tufts in one 384-triangle mesh, placement exclusions\n";
+}
 }
 int main() {
-    try { waterTests(); rockTests(); cloudTests(); return 0; }
+    try { waterTests(); rockTests(); cloudTests(); grassTests(); return 0; }
     catch (const std::exception& e) { std::cerr<<"FAIL: "<<e.what()<<'\n'; return 1; }
 }
