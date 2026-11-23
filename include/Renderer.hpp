@@ -23,7 +23,8 @@ private:
     Shader skyShader_;
     Mesh skyMesh_;
     GLint skyTop_, skyHorizon_;
-    Mesh cloudMesh_;
+    std::array<std::unique_ptr<Mesh>,CloudSystem::COUNT> cloudMeshes_;
+    std::array<glm::vec2,CloudSystem::COUNT> cloudHeightRanges_{};
     Shader effectsShader_;
     DynamicBatch rainBatch_;
     DynamicBatch lightningBatch_;
@@ -47,6 +48,8 @@ private:
     GLint wetness_, surface_, objectCamera_;
     GLint objectFogColor_, objectFogDensity_;
     GLint effectsFogColor_, effectsFogDensity_, effectsFogScale_;
+    GLint materialKind_, materialResponse_, materialWetGloss_;
+    GLint treeHeight_, modelTime_, treeWind_;
     std::size_t drawCalls_ = 0, rainRendered_ = 0, splashRendered_ = 0;
     std::size_t triangles_ = 0, lines_ = 0;
 };

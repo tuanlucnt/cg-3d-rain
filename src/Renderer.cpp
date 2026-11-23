@@ -1,4 +1,6 @@
 #include "Renderer.hpp"
+#include "Surface.hpp"
+#include "EnvironmentGeometry.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -12,7 +14,6 @@ Renderer::Renderer()
       skyShader_(std::string(RAIN_SHADER_DIR) + "/sky.vert", std::string(RAIN_SHADER_DIR) + "/sky.frag"),
       skyMesh_(geometry::screenTriangle()),
       skyTop_(skyShader_.uniform("uTop")), skyHorizon_(skyShader_.uniform("uHorizon")),
-      cloudMesh_(geometry::sphere()),
       effectsShader_(std::string(RAIN_SHADER_DIR) + "/effects.vert",
                      std::string(RAIN_SHADER_DIR) + "/effects.frag"),
       rainBatch_(RainSystem::RAIN_COUNT * 2, GL_LINES),
@@ -33,7 +34,19 @@ Renderer::Renderer()
       objectCamera_(shader_.uniform("uCameraPosition")),
       objectFogColor_(shader_.uniform("uFogColor")), objectFogDensity_(shader_.uniform("uFogDensity")),
       effectsFogColor_(effectsShader_.uniform("uFogColor")),
-      effectsFogDensity_(effectsShader_.uniform("uFogDensity")), effectsFogScale_(effectsShader_.uniform("uFogScale")) {
+      effectsFogDensity_(effectsShader_.uniform("uFogDensity")), effectsFogScale_(effectsShader_.uniform("uFogScale")),
+      materialKind_(shader_.uniform("uMaterialKind")), materialResponse_(shader_.uniform("uMaterialResponse")),
+      materialWetGloss_(shader_.uniform("uMaterialWetGloss")),
+      treeHeight_(shader_.uniform("uTreeHeight")), modelTime_(shader_.uniform("uModelTime")),
+      treeWind_(shader_.uniform("uTreeWind")) {
+    const CloudSystem layout;
+    for (std::size_t i=0;i<CloudSystem::COUNT;++i) {
+        const auto mesh=environment::cloud(layout.clusters()[i]);
+        auto range=glm::vec2(100,-100);
+        for (const auto& vertex:mesh) { range.x=std::min(range.x,vertex.position.y); range.y=std::max(range.y,vertex.position.y); }
+        cloudHeightRanges_[i]=range;
+        cloudMeshes_[i]=std::make_unique<Mesh>(mesh);
+    }
     glEnable(GL_DEPTH_TEST);
     for (std::size_t i = 0; i < ring_.size(); ++i) {
         const float a = static_cast<float>(i) * 6.2831853f / 12.0f;
@@ -50,6 +63,13 @@ Renderer::Renderer()
     glUniform1f(shader_.uniform("uDiffuse"), LightingSystem::DIFFUSE);
     glUniform2f(shader_.uniform("uFlashAttenuation"), LightingSystem::LINEAR_ATTENUATION,
                 LightingSystem::QUADRATIC_ATTENUATION);
+    glUniform3fv(shader_.uniform("uGroundColor"), 1, glm::value_ptr(surface::GROUND_COLOR));
+    for (std::size_t i=0;i<surface::puddles().size();++i) {
+        const auto& p=surface::puddles()[i];
+        const float a=glm::radians(p.yaw);
+        glUniform4f(shader_.uniform(("uPuddles["+std::to_string(i)+"]").c_str()),p.center.x,p.center.z,p.scale.x,p.scale.y);
+        glUniform2f(shader_.uniform(("uPuddleRotation["+std::to_string(i)+"]").c_str()),std::cos(a),std::sin(a));
+    }
     glUseProgram(0);
 }
 
@@ -84,6 +104,8 @@ void Renderer::draw(const Scene& scene, const Camera& camera, const WeatherSyste
     glUniform3fv(flashPosition_, 1, glm::value_ptr(weather.lighting.flashPosition()));
     glUniform1f(cloud_, 0.0f);
     glUniform1f(wetness_, weather.lighting.wetness());
+    glUniform1f(modelTime_, scene.animationTime());
+    glUniform2f(treeWind_, weather.windVelocity.x, weather.windVelocity.z);
     glUniform3fv(objectCamera_, 1, glm::value_ptr(camera.position()));
     glUniform2f(cloudHeightRange_, 0.0f, 1.0f);
     const glm::mat4 view = camera.view();
@@ -97,54 +119,56 @@ void Renderer::draw(const Scene& scene, const Camera& camera, const WeatherSyste
         glUniformMatrix3fv(normal_, 1, GL_FALSE, glm::value_ptr(object.normal));
         glUniform1f(surface_, object.puddle ? 2.0f : (object.ground ? 1.0f : 0.0f));
         glUniform3fv(color_, 1, glm::value_ptr(object.color));
+        glUniform1i(materialKind_, static_cast<int>(object.material.kind));
+        glUniform4fv(materialResponse_, 1, glm::value_ptr(object.material.response));
+        glUniform1f(materialWetGloss_, object.material.wetGloss);
+        glUniform1f(treeHeight_, object.treeHeight);
         object.mesh->draw();
         triangles_ += object.mesh->triangleCount();
         ++drawCalls_;
     }
     if (weather.cloudsEnabled) {
+        glUniform1i(materialKind_, 0);
+        glUniform4f(materialResponse_, 1, 1, 0, 32);
+        glUniform1f(materialWetGloss_, 0);
+        glUniform1f(treeHeight_, 0);
         glUniform1f(surface_, 0.0f);
         glUniform1f(cloud_, 1.0f);
-        struct FadingLobe {
-            const CloudCluster* cloud;
-            const CloudLobe* lobe;
-            float depth;
-        };
-        std::array<FadingLobe, CloudSystem::COUNT * 5> fading{};
-        std::size_t fadingCount = 0;
-        const auto drawLobe = [&](const CloudCluster& cloud, const CloudLobe& lobe) {
-            glUniform2f(cloudHeightRange_, cloud.position.y - 0.9f, cloud.position.y + 1.6f);
-            glUniform1f(coverage_, CloudSystem::coverage(cloud.position));
-            const auto model = glm::scale(glm::translate(glm::mat4(1),
-                cloud.position + lobe.offset), lobe.scale);
-            const auto normal = glm::transpose(glm::inverse(glm::mat3(model)));
-            const glm::vec3 color = glm::vec3(0.40f, 0.44f, 0.49f) * lobe.shade;
-            glUniformMatrix4fv(model_, 1, GL_FALSE, glm::value_ptr(model));
-            glUniformMatrix3fv(normal_, 1, GL_FALSE, glm::value_ptr(normal));
-            glUniform3fv(color_, 1, glm::value_ptr(color));
-            cloudMesh_.draw();
-            triangles_ += cloudMesh_.triangleCount();
+        struct FadingCloud { std::size_t index; float depth; };
+        std::array<FadingCloud,CloudSystem::COUNT> fading{};
+        std::size_t fadingCount=0;
+        const auto drawCloud=[&](std::size_t i) {
+            const auto& cloud=weather.clouds.clusters()[i];
+            const auto height=cloudHeightRanges_[i]+glm::vec2(cloud.position.y);
+            glUniform2f(cloudHeightRange_,height.x,height.y);
+            glUniform1f(coverage_,CloudSystem::coverage(cloud.position));
+            const auto model=glm::translate(glm::mat4(1),cloud.position);
+            const glm::mat3 normal(1);
+            glUniformMatrix4fv(model_,1,GL_FALSE,glm::value_ptr(model));
+            glUniformMatrix3fv(normal_,1,GL_FALSE,glm::value_ptr(normal));
+            glUniform3f(color_,0.40f,0.44f,0.49f);
+            cloudMeshes_[i]->draw();
+            triangles_+=cloudMeshes_[i]->triangleCount();
             ++drawCalls_;
         };
-        for (const auto& cloud : weather.clouds.clusters()) {
-            const float opacity = CloudSystem::coverage(cloud.position);
-            if (opacity <= 0) continue;
-            for (const auto& lobe : cloud.lobes) {
-                if (opacity >= 1.0f) drawLobe(cloud, lobe);
-                else fading[fadingCount++] = {&cloud, &lobe,
-                    glm::dot(cloud.position + lobe.offset - camera.position(), camera.forward())};
-            }
+        for (std::size_t i=0;i<CloudSystem::COUNT;++i) {
+            const auto& cloud=weather.clouds.clusters()[i];
+            const float opacity=CloudSystem::coverage(cloud.position);
+            if (opacity<=0) continue;
+            if (opacity>=1.0f) drawCloud(i);
+            else fading[fadingCount++]={i,glm::dot(cloud.position-camera.position(),camera.forward())};
         }
         if (fadingCount) {
-            std::sort(fading.begin(), fading.begin() + fadingCount,
-                      [](const auto& a, const auto& b) { return a.depth > b.depth; });
+            std::sort(fading.begin(),fading.begin()+fadingCount,[](const auto& a,const auto& b) { return a.depth>b.depth; });
             glEnable(GL_BLEND);
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
             glDepthMask(GL_FALSE);
-            for (std::size_t i = 0; i < fadingCount; ++i) drawLobe(*fading[i].cloud, *fading[i].lobe);
+            for (std::size_t i=0;i<fadingCount;++i) drawCloud(fading[i].index);
             glDepthMask(GL_TRUE);
             glDisable(GL_BLEND);
         }
     }
+
     if (weather.rainEnabled) {
         effectsShader_.use();
         glUniform1f(effectsFogScale_, 0.35f);
@@ -218,11 +242,13 @@ void Renderer::draw(const Scene& scene, const Camera& camera, const WeatherSyste
             std::size_t count = 0;
             for (const auto& p : weather.ripples.particles()) {
                 if (p.lifetime <= 0) continue;
+                const bool water = surface::waterMargin(p.center) > 0;
+                const glm::vec4 color = water ? glm::vec4(0.56f,0.77f,0.86f,std::min(0.72f,p.alpha*1.4f)) :
+                                               glm::vec4(0.46f,0.66f,0.78f,p.alpha);
                 for (std::size_t i = 0; i < ring_.size(); ++i) {
                     for (std::size_t j : {i, (i + 1) % ring_.size()}) {
                         const auto v = ring_[j] * p.radius;
-                        rippleVertices_[count++] = {p.center + glm::vec3(v.x, 0, v.y),
-                                                    {0.46f, 0.66f, 0.78f, p.alpha}};
+                        rippleVertices_[count++] = {p.center + glm::vec3(v.x, 0, v.y),color};
                     }
                 }
             }

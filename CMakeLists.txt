@@ -10,7 +10,7 @@ find_package(GLUT REQUIRED)
 find_package(GLEW REQUIRED)
 find_package(glm CONFIG REQUIRED)
 
-add_library(scene_core src/Camera.cpp src/Geometry.cpp src/CloudSystem.cpp
+add_library(scene_core src/Camera.cpp src/Geometry.cpp src/ModelGeometry.cpp src/EnvironmentGeometry.cpp src/CloudSystem.cpp
     src/RainSystem.cpp src/LightningSystem.cpp src/LightingSystem.cpp
     src/SplashSystem.cpp src/RippleSystem.cpp src/Surface.cpp src/WeatherSystem.cpp)
 target_include_directories(scene_core PUBLIC include)
@@ -44,5 +44,11 @@ if(BUILD_TESTING)
     add_executable(weather_tests tests/weather_tests.cpp)
     target_link_libraries(weather_tests PRIVATE scene_core)
     add_test(NAME weather_simulation COMMAND weather_tests)
+    add_executable(model_tests tests/model_tests.cpp)
+    target_link_libraries(model_tests PRIVATE scene_core)
+    add_test(NAME procedural_models COMMAND model_tests)
+    add_executable(environment_tests tests/environment_tests.cpp)
+    target_link_libraries(environment_tests PRIVATE scene_core)
+    add_test(NAME environment_geometry COMMAND environment_tests)
     # GUI tests are explicit: ordinary ctest also works without a display.
 endif()

@@ -853,3 +853,7 @@ Checklist cuối:
 - [ ] Esc và nút đóng cửa sổ thoát bình thường.
 
 **Dừng sau hạng mục 9. Hạng mục 10 — âm thanh — chưa triển khai.**
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+cmake --build build -j$(nproc)
+ctest --test-dir build --output-on-failure
+./build/rain_thunderstorm

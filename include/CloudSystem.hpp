@@ -15,7 +15,7 @@ struct CloudCluster {
     std::array<CloudLobe, 5> lobes;
 };
 
-// Simulation data only: the renderer owns the shared sphere mesh.
+// Simulation data only: the renderer owns cached meshes built from these lobes.
 class CloudSystem {
 public:
     static constexpr std::size_t COUNT = 4;

@@ -3,6 +3,7 @@
 #include <GL/freeglut.h>
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <filesystem>
@@ -158,6 +159,7 @@ void Application::update(float deltaTime) {
     camera_.move(direction, deltaTime);
     weather_.observerPosition = camera_.position();
     weather_.update(deltaTime);
+    if (scene_) scene_->update(deltaTime, weather_.paused);
 }
 
 void Application::tick() {
@@ -197,6 +199,7 @@ void Application::tick() {
 void Application::display() {
     if (exiting_ || !scene_ || !renderer_) return;
     if (options_.smokeTest && frames_ == 0) {
+        scene_->resetAnimation();
         // Deterministic half-second warmup makes real rain impacts/splashes visible.
         for (int i = 0; i < 5; ++i) weather_.update(0.1f);
     }
@@ -226,6 +229,7 @@ void Application::key(unsigned char value, bool pressed) {
     if (lower == 'r') {
         camera_.reset();
         weather_.reset();
+        if (scene_) scene_->resetAnimation();
         releaseInput();
     }
     if (lower == '3') weather_.cloudsEnabled = !weather_.cloudsEnabled;
@@ -327,6 +331,8 @@ void Application::fail(const char* message) {
 }
 
 void Application::inspectFramebuffer(const std::string& capturePath) const {
+    require(renderer_->triangles() < 10000 && renderer_->drawCalls() < 80,
+            "Scene exceeds the agreed model triangle/draw-call budget");
     const std::size_t pixels = static_cast<std::size_t>(width_) * height_;
     std::vector<float> depth(pixels);
     std::vector<unsigned char> color(pixels * 3);
@@ -368,6 +374,7 @@ void Application::inspectFramebuffer(const std::string& capturePath) const {
 
 void Application::smokeStep() {
     if (frames_ == 1) {
+        if (!options_.viewCaptureDirectory.empty()) std::filesystem::create_directories(options_.viewCaptureDirectory);
         inspectFramebuffer(options_.capturePath);
         require(renderer_->renderedRainCount() == RainSystem::RAIN_COUNT &&
                 renderer_->renderedSplashCount() == weather_.splashes.activeCount(),
@@ -484,9 +491,11 @@ void Application::smokeStep() {
         key(' ', true); key(' ', false);
         const auto frozen = weather_.rain.drops()[0].position;
         const float strikeTime = weather_.lightning.elapsed();
+        const float treeTime = scene_->animationTime();
         key('w', true); update(0.05f); key('w', false);
         require(weather_.paused && glm::distance(frozen, weather_.rain.drops()[0].position) == 0 &&
-                weather_.lightning.elapsed() == strikeTime, "Space must freeze weather time");
+                weather_.lightning.elapsed() == strikeTime && scene_->animationTime() == treeTime,
+                "Space must freeze weather and tree animation time");
         require(glm::distance(initial, camera_.position()) > 0.1f,
                 "Camera must remain movable while simulation is paused");
         camera_.reset();
@@ -494,6 +503,54 @@ void Application::smokeStep() {
         for (int i = 0; i < 6; ++i) weather_.update(0.1f);
         require(!weather_.lightning.active() && weather_.lighting.flash() == 0,
                 "Flash must return to background lighting after its lifetime");
+        const auto staticTree = renderAndRead();
+        const auto rainRevision = weather_.rain.revision();
+        const auto triangles = scene_->triangleCount();
+        for (int i = 0; i < 10; ++i) scene_->update(0.1f, false);
+        const auto movingTree = renderAndRead();
+        const auto swayPixels = changedPixels(staticTree, movingTree);
+        require(swayPixels > 5, "Vertex shader tree sway must visibly change the framebuffer");
+        require(weather_.rain.revision() == rainRevision && scene_->triangleCount() == triangles,
+                "Tree sway must not alter rain state or recreate geometry");
+        scene_->resetAnimation();
+        std::cout << "Tree sway pixels=" << swayPixels << "; static triangles=" << triangles << '\n';
+        // Freeze particle/camera state while varying only the environment's
+        // lighting inputs. Median samples avoid a rain line crossing one pixel.
+        const auto savedLighting=weather_.lighting;
+        const auto sample=[&](const std::vector<unsigned char>& pixels,glm::vec3 world) {
+            const auto clip=camera_.projection(static_cast<float>(width_)/height_)*camera_.view()*glm::vec4(world,1);
+            require(clip.w>0,"Environment probe must be in front of the camera");
+            const int x=static_cast<int>((clip.x/clip.w*0.5f+0.5f)*width_);
+            const int y=static_cast<int>((clip.y/clip.w*0.5f+0.5f)*height_);
+            std::vector<int> values;
+            for (int dy=-2;dy<=2;++dy) for (int dx=-2;dx<=2;++dx) {
+                require(x+dx>=0 && x+dx<width_ && y+dy>=0 && y+dy<height_,"Environment probe outside viewport");
+                const auto i=(static_cast<std::size_t>(y+dy)*width_+x+dx)*3;
+                values.push_back((int(pixels[i])+pixels[i+1]+pixels[i+2])/3);
+            }
+            std::sort(values.begin(),values.end());
+            return values[values.size()/2];
+        };
+        for (int i=0;i<1000;++i) weather_.lighting.update(0,0.1f,false);
+        const auto dryGround=renderAndRead();
+        if (!options_.viewCaptureDirectory.empty())
+            inspectFramebuffer((std::filesystem::path(options_.viewCaptureDirectory)/"ground-dry.ppm").string());
+        for (int i=0;i<1000;++i) weather_.lighting.update(0,0.1f,true);
+        const auto wetGround=renderAndRead();
+        const int drySoil=sample(dryGround,{0,0,8}),wetSoil=sample(wetGround,{0,0,8});
+        require(changedPixels(dryGround,wetGround)>1000 && drySoil>wetSoil+3,
+                "Wetness must visibly darken soil while preserving a continuous surface");
+        if (!options_.viewCaptureDirectory.empty())
+            inspectFramebuffer((std::filesystem::path(options_.viewCaptureDirectory)/"ground-wet.ppm").string());
+        weather_.lighting.setFlashPosition({-2,5,4.5f});
+        weather_.lighting.update(1);
+        const auto litWater=renderAndRead();
+        const int waterBefore=sample(wetGround,{-2,0.012f,4.5f}),waterAfter=sample(litWater,{-2,0.012f,4.5f});
+        require(waterAfter>waterBefore+5 && waterAfter<240,
+                "Water must respond to flash without burning out");
+        std::cout<<"Environment probe luminance: dry/wet soil="<<drySoil<<'/'<<wetSoil
+                 <<", water before/flash="<<waterBefore<<'/'<<waterAfter<<'\n';
+        weather_.lighting=savedLighting;
         for (unsigned i = 0; i < 3; ++i) {
             key(static_cast<unsigned char>('4' + i), true);
             renderer_->draw(*scene_, camera_, weather_, width_, height_);
@@ -508,6 +565,16 @@ void Application::smokeStep() {
             key('l', true); key('l', false);
             renderer_->draw(*scene_, camera_, weather_, width_, height_);
             inspectFramebuffer((std::filesystem::path(options_.viewCaptureDirectory) / "ground-flash.ppm").string());
+            Camera treeCamera;
+            treeCamera.preset(2);
+            treeCamera.move({-1,0,0},0.8f);
+            const glm::vec3 target(-6.5f,2.0f,4.0f);
+            const auto direction=glm::normalize(target-treeCamera.position());
+            const float yaw=glm::degrees(std::atan2(direction.z,direction.x));
+            const float pitch=glm::degrees(std::asin(direction.y));
+            treeCamera.rotate((yaw-treeCamera.yaw())/0.12f,(treeCamera.pitch()-pitch)/0.12f);
+            renderer_->draw(*scene_,treeCamera,weather_,width_,height_);
+            inspectFramebuffer((std::filesystem::path(options_.viewCaptureDirectory) / "tree-detail.ppm").string());
         }
         key('4', true); key('4', false);
         glutReshapeWindow(640, 400);
@@ -526,6 +593,24 @@ void Application::smokeStep() {
             inspectFramebuffer(options_.cloudWrapCapturePath);
             std::cout << "Right cloud wrap opacity: "
                       << CloudSystem::coverage(weather_.clouds.clusters()[2].position) << '\n';
+            const auto fading=readColor(width_,height_);
+            std::vector<float> fadeDepth(static_cast<std::size_t>(width_)*height_);
+            glReadPixels(0,0,width_,height_,GL_DEPTH_COMPONENT,GL_FLOAT,fadeDepth.data());
+            weather_.cloudsEnabled=false;
+            renderer_->draw(*scene_,camera_,weather_,width_,height_);
+            const auto clear=readColor(width_,height_);
+            std::vector<float> clearDepth(fadeDepth.size());
+            glReadPixels(0,0,width_,height_,GL_DEPTH_COMPONENT,GL_FLOAT,clearDepth.data());
+            std::size_t transparentPixels=0;
+            for (std::size_t p=0;p<fadeDepth.size();++p)
+                if (fadeDepth[p]>0.99999f && clearDepth[p]>0.99999f &&
+                    std::abs(int(fading[p*3])-int(clear[p*3]))>5) ++transparentPixels;
+            require(transparentPixels>50,"Fading cloud must blend visibly without writing depth");
+            weather_.cloudsEnabled=true;
+            renderer_->draw(*scene_,camera_,weather_,width_,height_);
+            require(changedPixels(fading,readColor(width_,height_))==0,"Cloud fade must be deterministic without stochastic holes");
+            inspectFramebuffer();
+            std::cout<<"Cloud fade pixels without depth writes="<<transparentPixels<<'\n';
         }
         smokeCompleted_ = true;
         requestExit();
