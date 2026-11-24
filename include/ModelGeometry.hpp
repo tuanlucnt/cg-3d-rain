@@ -4,10 +4,13 @@
 #include <cstdint>
 
 namespace models {
+inline constexpr glm::vec3 HOUSE_POSITION{-1, 0, -1};
 enum class HousePart : std::size_t { Walls, Stone, Roof, Trim, Door, Glass, Metal, Chimney, Cavity, Count };
 using House = std::array<std::vector<Vertex>, static_cast<std::size_t>(HousePart::Count)>;
 // Local origin is ground-level center. Scene translates the model to (-1,0,-1).
 House house();
+// Immutable geometry shared by rendering and the static world-space collider.
+const House& houseGeometry();
 
 struct TreeParameters {
     float height = 3.8f;

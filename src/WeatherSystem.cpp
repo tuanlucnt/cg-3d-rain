@@ -41,9 +41,10 @@ void WeatherSystem::update(float deltaTime) {
         ripples.update(static_cast<float>(step));
         if (rainEnabled) {
             for (std::size_t i = 0; i < rain.impactCount(); ++i) {
-                splashes.emit(rain.impacts()[i], true);
-                const auto hit = rain.impacts()[i];
-                ripples.emit(hit, true, surface::waterMargin(hit));
+                const auto& hit = rain.impacts()[i];
+                const bool sampled = hit.surface == SurfaceType::Ground || hit.surface == SurfaceType::Water;
+                splashes.emitSurface(hit.position, hit.normal, hit.velocity, hit.surface, sampled);
+                if (hit.surface == SurfaceType::Water) ripples.emit(hit.position, true);
             }
         }
         lighting.update(lightning.flashIntensity(), static_cast<float>(step), rainEnabled);

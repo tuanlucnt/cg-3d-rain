@@ -12,7 +12,7 @@ find_package(glm CONFIG REQUIRED)
 
 add_library(scene_core src/Camera.cpp src/Geometry.cpp src/ModelGeometry.cpp src/EnvironmentGeometry.cpp src/CloudSystem.cpp
     src/RainSystem.cpp src/LightningSystem.cpp src/LightingSystem.cpp src/TimeOfDaySystem.cpp
-    src/SplashSystem.cpp src/RippleSystem.cpp src/Surface.cpp src/WeatherSystem.cpp)
+    src/SplashSystem.cpp src/RippleSystem.cpp src/Surface.cpp src/WeatherSystem.cpp src/HouseCollider.cpp src/SceneCollision.cpp)
 target_include_directories(scene_core PUBLIC include)
 target_link_libraries(scene_core PUBLIC glm::glm)
 
@@ -53,5 +53,8 @@ if(BUILD_TESTING)
     add_executable(lighting_time_tests tests/lighting_time_tests.cpp)
     target_link_libraries(lighting_time_tests PRIVATE scene_core)
     add_test(NAME lighting_and_time COMMAND lighting_time_tests)
+    add_executable(collision_tests tests/collision_tests.cpp)
+    target_link_libraries(collision_tests PRIVATE scene_core)
+    add_test(NAME rain_house_collision COMMAND collision_tests)
     # GUI tests are explicit: ordinary ctest also works without a display.
 endif()

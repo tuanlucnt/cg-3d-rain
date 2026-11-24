@@ -6,6 +6,7 @@
 #include <cmath>
 #include <random>
 #include <stdexcept>
+#include <glm/gtc/matrix_transform.hpp>
 
 namespace {
 void triangle(std::vector<Vertex>& mesh, glm::vec3 a, glm::vec3 b, glm::vec3 c, glm::vec3 outward) {
@@ -116,6 +117,20 @@ std::vector<Vertex> rock(std::uint32_t seed) {
         add({lean.x,0.95f,lean.y},rings[2][i],rings[2][j]);
     }
     return mesh;
+}
+
+const std::vector<Vertex>& rockGeometry(std::size_t index) {
+    static const auto data = [] {
+        std::array<std::vector<Vertex>, 3> result;
+        for (std::size_t i = 0; i < result.size(); ++i) result[i] = rock(rocks()[i].seed);
+        return result;
+    }();
+    return data.at(index);
+}
+
+glm::mat4 rockTransform(const RockInstance& instance) {
+    return glm::scale(glm::rotate(glm::translate(glm::mat4(1), instance.position),
+        glm::radians(instance.yaw), glm::vec3(0, 1, 0)), instance.scale);
 }
 
 std::vector<Vertex> cloud(const CloudCluster& cluster) {

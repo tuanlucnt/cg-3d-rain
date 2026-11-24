@@ -94,9 +94,13 @@ void rainTests() {
         rain.update(1.0f / 120.0f, {0.65f, 0, 0.2f});
         impacts += rain.impactCount();
         for (std::size_t k = 0; k < rain.impactCount(); ++k) {
-            const auto hit = rain.impacts()[k];
-            require(hit.y == 0 && std::abs(hit.x) <= 10 && std::abs(hit.z) <= 10,
-                    "Ground impact must be on the 20x20 plane");
+            const auto& hit = rain.impacts()[k];
+            require(std::abs(hit.position.x) <= 10 && std::abs(hit.position.z) <= 10 &&
+                    hit.t >= 0 && hit.t <= 1, "Impact must lie on the segment and bounded scene");
+            if (hit.surface == SurfaceType::Ground) require(hit.position.y == 0, "Ground impact height");
+            if (hit.surface == SurfaceType::Water)
+                require(std::abs(hit.position.y - surface::waterAt(hit.position).height) < 1e-5f,
+                        "Water impact must be on the rendered water plane");
         }
     }
     require(rain.recycledCount() > 1000 && impacts > 1000, "Rain must recycle repeatedly");
@@ -256,13 +260,14 @@ void lightningTests() {
 void splashTests() {
     SplashSystem splashes;
     const auto* pool = splashes.particles().data();
-    splashes.emit({0, 0, 0});
-    require(splashes.activeCount() == 2, "Two droplets per accepted ground impact");
+    splashes.emit({8, 0, 8});
+    require(splashes.activeCount() >= 2 && splashes.activeCount() <= 4, "Two to four droplets per ground impact");
     const auto start = splashes.particles()[0].position;
     splashes.update(1.0f / 120.0f);
     require(splashes.particles()[0].position.y > start.y, "Splashes initially move upward");
-    for (int i = 0; i < 2000; ++i) splashes.emit({1, 0, 1});
-    require(splashes.activeCount() == SplashSystem::MAX_SPLASHES,
+    for (int i = 0; i < 2000; ++i) splashes.emit({8, 0, 8});
+    require(splashes.activeCount() >= SplashSystem::MAX_SPLASHES - 3 &&
+            splashes.activeCount() <= SplashSystem::MAX_SPLASHES,
             "Full splash pool must reuse existing particles, never exceed its cap");
     for (int i = 0; i < 60; ++i) splashes.update(1.0f / 120.0f);
     require(splashes.activeCount() == 0, "All splash particles expire without new rain");
@@ -362,12 +367,13 @@ void integrationTests() {
 void rippleTests() {
     RippleSystem ripple;
     const auto* pool = ripple.particles().data();
-    ripple.emit({0, 0, 0});
+    const auto water = surface::puddles()[0].center;
+    ripple.emit(water);
     const auto first = ripple.particles()[0];
     ripple.update(0.1f);
     require(ripple.particles()[0].radius > first.radius && ripple.particles()[0].alpha < first.alpha,
             "Ripple expands while fading");
-    for (int i = 0; i < 200; ++i) ripple.emit({1, 0, 1});
+    for (int i = 0; i < 200; ++i) ripple.emit(water);
     require(ripple.activeCount() == RippleSystem::CAPACITY && ripple.rejected() > 0,
             "Ripple pool enforces its fixed cap");
     for (int i = 0; i < 10; ++i) ripple.update(0.1f);
@@ -390,7 +396,7 @@ void surfaceTests() {
         const float margin = surface::waterMargin(p.center);
         require(margin > 0.3f, "Puddle center lies inside its polygon");
         RippleSystem ripple;
-        ripple.emit(p.center, false, margin);
+        ripple.emit(p.center);
         for (int i = 0; i < 4; ++i) ripple.update(0.1f);
         require(ripple.particles()[0].radius <= margin && ripple.particles()[0].center.y > p.center.y,
                 "Water ripple fits its puddle and stays above its surface");

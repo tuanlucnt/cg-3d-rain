@@ -16,7 +16,7 @@ Scene::Scene()
     add(puddle_, {0,0,0}, {1,1,1}, {0.115f,0.19f,0.22f});
     objects_.back().puddle = true;
 
-    const auto house = models::house();
+    const auto& house = models::houseGeometry();
     const std::array<glm::vec3, 9> colors{{
         {0.70f,0.65f,0.53f}, {0.40f,0.42f,0.39f}, {0.40f,0.15f,0.09f},
         {0.32f,0.24f,0.15f}, {0.23f,0.13f,0.07f}, {0.20f,0.34f,0.39f},
@@ -32,7 +32,7 @@ Scene::Scene()
         {MaterialKind::Brick, {1,1,0.015f,20},0},
         {MaterialKind::Plain, {0.8f,0.4f,0,32},0}
     }};
-    for (std::size_t i = 0; i < house.size(); ++i) modelPart(house[i], {-1,0,-1}, colors[i], materials[i]);
+    for (std::size_t i = 0; i < house.size(); ++i) modelPart(house[i], models::HOUSE_POSITION, colors[i], materials[i]);
 
     for (const auto& instance : models::treeLayout()) {
         const auto data=models::tree(instance.geometry);
@@ -42,9 +42,11 @@ Scene::Scene()
                   {MaterialKind::Foliage,{1.12f,1,0,24},0},instance.geometry.height);
     }
 
-    for (const auto& instance : environment::rocks()) {
-        modelMeshes_.push_back(std::make_unique<Mesh>(environment::rock(instance.seed)));
-        add(*modelMeshes_.back(),instance.position,instance.scale,instance.color,instance.yaw);
+    for (std::size_t i = 0; i < environment::rocks().size(); ++i) {
+        const auto& instance = environment::rocks()[i];
+        modelMeshes_.push_back(std::make_unique<Mesh>(environment::rockGeometry(i)));
+        const auto model = environment::rockTransform(instance);
+        objects_.push_back({modelMeshes_.back().get(), model, glm::transpose(glm::inverse(glm::mat3(model))), instance.color});
         objects_.back().material={MaterialKind::Rock,{1,1,0.012f,12},0.018f};
     }
     modelPart(environment::grass(),{0,0,0},{0.23f,0.35f,0.19f},{MaterialKind::Grass,{1,1,0,16},0});

@@ -76,6 +76,11 @@ void gable(MeshData& v) {
 }
 
 namespace models {
+const House& houseGeometry() {
+    static const House data = house();
+    return data;
+}
+
 House house() {
     House h;
     for (auto& part : h) part.reserve(1536);

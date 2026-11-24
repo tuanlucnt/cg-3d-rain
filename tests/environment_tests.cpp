@@ -45,11 +45,11 @@ void waterTests() {
         // Interior samples near different sections of the concave shoreline.
         for (const auto& edge:polygon) {
             const glm::vec2 xz=glm::mix(glm::vec2(p.center.x,p.center.z),edge,0.65f);
-            const glm::vec3 hit(xz.x,0,xz.y);
+            const glm::vec3 hit(xz.x,p.center.y,xz.y);
             const float margin=surface::waterMargin(hit);
             require(margin>0,"Interior water samples must match the rendered polygon");
             RippleSystem ripple;
-            ripple.emit(hit,false,margin);
+            ripple.emit(hit);
             for (int t=0;t<6;++t) {
                 for (const auto& r:ripple.particles()) if (r.lifetime>0) {
                     require(r.center.y>p.center.y,"Ripple must not Z-fight the water");

@@ -49,7 +49,8 @@ const std::array<glm::vec2, OUTLINE_POINTS>& polygon(std::size_t index) {
     return polygons.at(index);
 }
 
-float waterMargin(glm::vec3 hit) {
+WaterSample waterAt(glm::vec3 hit) {
+    if (!std::isfinite(hit.x) || !std::isfinite(hit.z)) return {};
     static const auto bounds=[] {
         std::array<glm::vec4,3> result{};
         for (std::size_t j=0;j<result.size();++j) {
@@ -74,8 +75,12 @@ float waterMargin(glm::vec3 hit) {
             const float t = std::clamp(glm::dot(point - p, edge) / glm::dot(edge, edge), 0.0f, 1.0f);
             margin = std::min(margin, glm::distance(point, p + edge * t));
         }
-        if (inside) return margin;
+        if (inside && margin > 0) return {static_cast<int>(index), margin, puddles()[index].center.y};
     }
-    return 0;
+    return {};
+}
+
+float waterMargin(glm::vec3 hit) {
+    return waterAt(hit).margin;
 }
 }

@@ -1,4 +1,6 @@
 #include "Application.hpp"
+#include "SceneCollision.hpp"
+#include "EnvironmentGeometry.hpp"
 
 #include <GL/freeglut.h>
 #include <algorithm>
@@ -391,6 +393,127 @@ void Application::inspectFramebuffer(const std::string& capturePath) const {
               << '/' << pixels << " pixels contain geometry\n";
 }
 
+void Application::inspectRoofSplashes() {
+    const auto savedWeather = weather_;
+    Camera roofCamera;
+    for (const int side : {-1, 1}) {
+        roofCamera.preset(1);
+        if (side < 0) roofCamera.move({-1, 0, 0}, 2.2f);
+        roofCamera.move({0, 1, 0}, 0.6f);
+        const auto target = models::HOUSE_POSITION + glm::vec3(side * 1.1f, 3.5f, 0.6f);
+        const auto direction = glm::normalize(target - roofCamera.position());
+        const float yaw = glm::degrees(std::atan2(direction.z, direction.x));
+        const float pitch = glm::degrees(std::asin(direction.y));
+        roofCamera.rotate((yaw - roofCamera.yaw()) / 0.12f, (roofCamera.pitch() - pitch) / 0.12f);
+        for (const int hour : {12, 0}) {
+            weather_.reset();
+            weather_.rainEnabled = weather_.lightningEnabled = false;
+            weather_.timeOfDay.setHour(hour);
+            weather_.refreshLighting();
+            renderer_->draw(*scene_, roofCamera, weather_, width_, height_);
+            const auto empty = readColor(width_, height_);
+            // Deterministic impact fixtures isolate roof spray from ground rain.
+            for (const float x : {0.6f, 1.2f, 1.9f}) for (const float z : {0.0f, 0.6f, 1.2f}) {
+                const auto top = models::HOUSE_POSITION + glm::vec3(side * x, 8, z);
+                collision::Hit hit;
+                require(collision::house().intersect(top, top - glm::vec3(0, 8, 0), hit), "Roof splash fixture must hit house");
+                weather_.splashes.emitSurface(hit.position, hit.normal, {0, -12, 0});
+            }
+            weather_.splashes.update(0.035f);
+            renderer_->draw(*scene_, roofCamera, weather_, width_, height_);
+            const auto spray = readColor(width_, height_);
+            const auto pixels = changedPixels(empty, spray);
+            require(pixels > 10 && renderer_->renderedSplashCount() == weather_.splashes.activeCount(),
+                    "Roof splashes must contribute visible pixels on both sides, day and night");
+            const std::string name = std::string("roof-") + (side < 0 ? "left-" : "right-") +
+                (hour == 0 ? "night" : "day");
+            const auto capture = [&](const std::string& label) {
+                const auto path = options_.viewCaptureDirectory.empty() ? std::string{} :
+                    (std::filesystem::path(options_.viewCaptureDirectory) / (label + ".ppm")).string();
+                inspectFramebuffer(path);
+            };
+            capture(name);
+            const auto splashState = weather_.splashes;
+            const auto baseLight = weather_.lighting.particleColor();
+            weather_.triggerLightning();
+            const auto light = weather_.lighting.particleColor();
+            renderer_->draw(*scene_, roofCamera, weather_, width_, height_);
+            const auto flashSpray = readColor(width_, height_);
+            weather_.splashes.reset();
+            renderer_->draw(*scene_, roofCamera, weather_, width_, height_);
+            const auto flashPixels = changedPixels(flashSpray, readColor(width_, height_));
+            require(flashPixels > 10 && light.b > baseLight.b,
+                    "Roof spray remains visible with lightning illumination");
+            weather_.splashes = splashState;
+            renderer_->draw(*scene_, roofCamera, weather_, width_, height_);
+            capture(name + "-lightning");
+            std::cout << "Roof splash " << name << ": " << pixels << " pixels, flash=" << flashPixels << '\n';
+        }
+    }
+    weather_ = savedWeather;
+}
+
+void Application::inspectSurfaceEffects() {
+    const auto savedWeather = weather_;
+    for (int fixture = 0; fixture < 5; ++fixture) {
+        const bool rock = fixture >= 2, water = fixture == 1;
+        const auto type = rock ? SurfaceType::Rock : (water ? SurfaceType::Water : SurfaceType::Ground);
+        const auto target = rock ? environment::rocks()[fixture - 2].position :
+            (water ? surface::puddles()[0].center : glm::vec3(0.2f, 0, 5.2f));
+        Camera effectCamera;
+        effectCamera.preset(rock ? 1 : 2);
+        const auto direction = glm::normalize(target - effectCamera.position());
+        const float yaw = glm::degrees(std::atan2(direction.z, direction.x));
+        const float pitch = glm::degrees(std::asin(direction.y));
+        effectCamera.rotate((yaw - effectCamera.yaw()) / 0.12f, (effectCamera.pitch() - pitch) / 0.12f);
+        for (const int hour : {12, 0}) {
+            weather_.reset();
+            weather_.rainEnabled = weather_.lightningEnabled = false;
+            weather_.timeOfDay.setHour(hour); weather_.refreshLighting();
+            renderer_->draw(*scene_, effectCamera, weather_, width_, height_);
+            const auto empty = readColor(width_, height_);
+            weather_.ripples.emit({8, 0, 8});
+            require(weather_.ripples.activeCount() == 0, "Dry-ground fixture must reject ripples");
+            for (const float x : {-0.2f, 0.0f, 0.2f}) for (const float z : {-0.2f, 0.0f, 0.2f}) {
+                const auto top = target + glm::vec3(x, 8, z);
+                collision::Hit hit;
+                require(collision::earliestHit(top, top - glm::vec3(0, 10, 0), hit) && hit.surface == type,
+                        "Surface fixture must hit the expected rendered material");
+                weather_.splashes.emitSurface(hit.position, hit.normal, {0,-12,0}, type);
+                if (water) weather_.ripples.emit(hit.position);
+            }
+            weather_.splashes.update(0.035f);
+            renderer_->draw(*scene_, effectCamera, weather_, width_, height_);
+            const auto sprayPixels = changedPixels(empty, readColor(width_, height_));
+            require(sprayPixels > 3, "Ground, water and each rock must have visible small droplets");
+            require(renderer_->renderedRippleCount() == (water ? weather_.ripples.activeCount() : 0),
+                    "Only water fixtures submit ripple geometry");
+            weather_.ripples.update(0.2f);
+            const std::string name = std::string(rock ? "rock-" : (water ? "water-" : "ground-")) +
+                (rock ? std::to_string(fixture - 2) + "-" : "") + (hour ? "day" : "night");
+            for (const bool flash : {false, true}) {
+                if (flash) weather_.triggerLightning();
+                renderer_->draw(*scene_, effectCamera, weather_, width_, height_);
+                const auto path = options_.viewCaptureDirectory.empty() ? std::string{} :
+                    (std::filesystem::path(options_.viewCaptureDirectory) /
+                     (name + (flash ? "-lightning.ppm" : ".ppm"))).string();
+                inspectFramebuffer(path);
+                const auto effects = readColor(width_, height_);
+                const auto savedSpray = weather_.splashes;
+                const auto savedRipples = weather_.ripples;
+                weather_.splashes.reset(); weather_.ripples.reset();
+                renderer_->draw(*scene_, effectCamera, weather_, width_, height_);
+                require(changedPixels(effects, readColor(width_, height_)) > 3,
+                        "Surface effects must remain visible by day/night and lightning");
+                weather_.splashes = savedSpray; weather_.ripples = savedRipples;
+            }
+            std::cout << "Surface fixture " << name << ": spray=" << sprayPixels
+                      << " pixels, ripples=" << weather_.ripples.activeCount() << '\n';
+        }
+    }
+    weather_ = savedWeather;
+}
+
 void Application::smokeStep() {
     if (frames_ == 1) {
         if (!options_.viewCaptureDirectory.empty()) std::filesystem::create_directories(options_.viewCaptureDirectory);
@@ -430,7 +553,7 @@ void Application::smokeStep() {
         const auto rippleState = weather_.ripples;
         weather_.ripples.reset();
         const auto ripplePixels = changedPixels(baseline, renderAndRead());
-        require(ripplePixels > 3, "Real ground impacts must render expanding ripple rings");
+        require(ripplePixels > 3, "Real water impacts must render expanding ripple rings");
         weather_.ripples = rippleState;
         std::cout << "Ripple pixels=" << ripplePixels << ", splash active="
                   << weather_.splashes.activeCount() << "/512, rejected requests="
@@ -604,6 +727,8 @@ void Application::smokeStep() {
         key('r',true); key('r',false);
         require(weather_.timeOfDay.hour()==18 && !weather_.timeOfDay.autoAdvance(),"R must restore default hour and auto OFF");
         weather_=savedWeather; camera_.reset();
+        inspectRoofSplashes();
+        inspectSurfaceEffects();
         const auto captureTime=[&](const char* name) {
             if (!options_.viewCaptureDirectory.empty())
                 inspectFramebuffer((std::filesystem::path(options_.viewCaptureDirectory)/name).string());

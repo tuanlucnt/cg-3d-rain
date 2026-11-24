@@ -47,6 +47,8 @@ private:
     void requestExit();
     void fail(const char* message);
     void smokeStep();
+    void inspectRoofSplashes();
+    void inspectSurfaceEffects();
     void inspectFramebuffer(const std::string& capturePath = {}) const;
     void printTimeHelp() const;
 

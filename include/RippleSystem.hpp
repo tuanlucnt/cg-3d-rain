@@ -16,9 +16,10 @@ struct Ripple {
 class RippleSystem {
 public:
     static constexpr std::size_t CAPACITY = 48;
+    static constexpr float HEIGHT_OFFSET = 0.002f;
     RippleSystem() { reset(); }
     void reset();
-    void emit(glm::vec3 hit, bool sampled = false, float waterMargin = 0);
+    void emit(glm::vec3 hit, bool sampled = false);
     void update(float deltaTime);
     const std::array<Ripple, CAPACITY>& particles() const { return particles_; }
     std::size_t activeCount() const { return active_; }

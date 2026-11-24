@@ -6,6 +6,12 @@ FreeGLUT, GLEW, GLM và CMake**. Đã triển khai giai đoạn 1–5 và cải 
 [Báo cáo mới nhất và đối chứng](#visual-enhancement-và-daynight-system) nằm cuối tài liệu;
 các báo cáo 1–9 được giữ làm lịch sử. **Chưa triển khai âm thanh (hạng mục 10).**
 
+Cập nhật 24/11/2026: mưa va chạm liên tục với hai mái, phần nhô ra, sống mái,
+ống khói, các mặt nhà và ba tảng đá; sinh splash theo pháp tuyến trong pool hiện có.
+Ripple chỉ được tạo trong polygon vũng nước và bị giới hạn trước đường bờ.
+[Va chạm mái nhà](docs/11_RAIN_COLLISION.md) ·
+[Sửa ripple và bổ sung va chạm đất đá nước](docs/12_SURFACE_COLLISIONS.md).
+
 Cảnh gốc giữ nguyên: mặt đất 20 × 20 tại Y=0, một nhà, 4 cây, 3 đá và camera tự
 do. Có thêm trời tối, 4 cụm mây chuyển động, đúng **1.000 hạt mưa**, sét phân
 nhánh, ánh chớp, splash giới hạn **512 hạt**, ripple **48 slot**, 3 vũng nước,
@@ -106,6 +112,7 @@ kiểm thử CPU. Renderer giữ tài nguyên GPU. Không viết lại hệ rend
 | `include/LightingSystem.hpp`, `src/LightingSystem.cpp` | Ánh chớp, wetness, sky/fog color và fog factor |
 | `include/RippleSystem.hpp`, `src/RippleSystem.cpp` | Pool 48 vòng gợn lan rộng/fade, thống kê từ chối |
 | `include/Surface.hpp`, `src/Surface.cpp` | 3 polygon vũng nước dùng chung cho mesh và va chạm ripple |
+| `include/HouseCollider.hpp`, `src/HouseCollider.cpp`, `include/SceneCollision.hpp`, `src/SceneCollision.cpp` | BVH tam giác dùng chung cho nhà/đá và truy vấn va chạm đầu tiên theo loại bề mặt |
 | `include/Benchmark.hpp`, `src/Benchmark.cpp` | Đo frame time, GPU query, RAM/CPU; chỉ tạo trong benchmark |
 | `shaders/sky.vert`, `shaders/sky.frag` | Fullscreen triangle gradient, không ghi depth |
 | `include/WeatherSystem.hpp`, `src/WeatherSystem.cpp` | Mới: gió chung, fixed timestep, thứ tự update, pause/reset/toggles |
@@ -371,7 +378,7 @@ ngắn này. Timer đang giới hạn FPS; không kết luận về FPS tối đ
 
 ## Giới hạn và checklist kiểm tra trực tiếp
 
-- Va chạm mưa/splash chỉ với mặt đất Y=0; chưa chặn giọt tại mái nhà, cây hoặc đá.
+- Mưa/splash đã va chạm với nhà, đá, mặt đất và mặt nước; cây chưa có collider.
 - Camera tự do giữ nguyên, có thể đi xuyên vật thể; chưa có collision camera.
 - Mây dùng mesh ghép low-poly; alpha fade sort theo tâm lobe nên chưa giải quyết
   chính xác mọi giao cắt trong suốt. Không còn dither ngẫu nhiên.

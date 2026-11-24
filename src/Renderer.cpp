@@ -2,6 +2,7 @@
 #include "Surface.hpp"
 #include "EnvironmentGeometry.hpp"
 #include "ModelGeometry.hpp"
+#include "HouseCollider.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -87,7 +88,7 @@ Renderer::Renderer()
 
 void Renderer::draw(const Scene& scene, const Camera& camera, const WeatherSystem& weather,
                     int width, int height) {
-    drawCalls_ = rainRendered_ = splashRendered_ = 0;
+    drawCalls_ = rainRendered_ = splashRendered_ = rippleRendered_ = 0;
     triangles_ = lines_ = 0;
     const auto sky = weather.lighting.skyColor();
     glClearColor(sky.r, sky.g, sky.b, 1.0f);
@@ -209,7 +210,7 @@ void Renderer::draw(const Scene& scene, const Camera& camera, const WeatherSyste
                 // distance-dependent length without CPU/camera re-uploads.
                 const glm::vec4 color(drop.velocity,drop.opacity);
                 rainVertices_[i++] = {drop.position, color};
-                rainVertices_[i++] = {drop.position,color,drop.length};
+                rainVertices_[i++] = {drop.position,color,std::min(drop.length, drop.streakLengthLimit)};
             }
             rainBatch_.upload(rainVertices_.data(), rainVertices_.size());
             rainRevision_ = weather.rain.revision();
@@ -238,10 +239,12 @@ void Renderer::draw(const Scene& scene, const Camera& camera, const WeatherSyste
             std::size_t count = 0;
             for (const auto& p : weather.splashes.particles()) {
                 if (p.lifetime <= 0) continue;
-                const glm::vec4 color(0.65f, 0.83f, 0.95f, 0.85f * p.lifetime / p.initialLifetime);
-                const auto tail = p.position - glm::normalize(p.velocity) * p.length;
+                const glm::vec4 color(0.65f, 0.83f, 0.95f, p.alpha);
+                const float speed = glm::length(p.velocity);
+                const auto tail = collision::clipStreak(p.position, p.position -
+                    p.velocity / std::max(speed, collision::EPSILON) * p.length);
                 splashVertices_[count++] = {p.position, color};
-                splashVertices_[count++] = {{tail.x, std::max(tail.y, 0.015f), tail.z}, color};
+                splashVertices_[count++] = {tail, color};
             }
             splashBatch_.upload(splashVertices_.data(), count);
             splashRevision_ = weather.splashes.revision();
@@ -269,12 +272,13 @@ void Renderer::draw(const Scene& scene, const Camera& camera, const WeatherSyste
             std::size_t count = 0;
             for (const auto& p : weather.ripples.particles()) {
                 if (p.lifetime <= 0) continue;
-                const bool water = surface::waterMargin(p.center) > 0;
-                const glm::vec4 color = water ? glm::vec4(0.56f,0.77f,0.86f,std::min(0.72f,p.alpha*1.4f)) :
-                                               glm::vec4(0.46f,0.66f,0.78f,p.alpha);
+                const auto water = surface::waterAt(p.center);
+                if (!water || std::abs(p.center.y - water.height - RippleSystem::HEIGHT_OFFSET) > 0.001f) continue;
+                const float radius = std::min(p.radius, water.margin * 0.9f);
+                const glm::vec4 color(0.56f,0.77f,0.86f,std::min(0.72f,p.alpha*1.4f));
                 for (std::size_t i = 0; i < ring_.size(); ++i) {
                     for (std::size_t j : {i, (i + 1) % ring_.size()}) {
-                        const auto v = ring_[j] * p.radius;
+                        const auto v = ring_[j] * radius;
                         rippleVertices_[count++] = {p.center + glm::vec3(v.x, 0, v.y),color};
                     }
                 }
@@ -286,6 +290,7 @@ void Renderer::draw(const Scene& scene, const Camera& camera, const WeatherSyste
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         glDepthMask(GL_FALSE);
         rippleBatch_.draw();
+        rippleRendered_ = rippleBatch_.vertexCount() / 24;
         lines_ += rippleBatch_.vertexCount() / 2;
         ++drawCalls_;
         glDepthMask(GL_TRUE);
