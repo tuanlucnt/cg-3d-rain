@@ -9,6 +9,10 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <string>
 
+#ifndef RAIN_SHADER_DIR
+#define RAIN_SHADER_DIR "shaders"
+#endif
+
 Renderer::Renderer()
     : shader_(std::string(RAIN_SHADER_DIR) + "/object.vert",
               std::string(RAIN_SHADER_DIR) + "/object.frag"),
